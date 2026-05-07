@@ -13,6 +13,10 @@ import webExtension from "vite-plugin-web-extension";
 import path from "path";
 
 export default defineConfig({
+  // Vite copies everything in publicDir to dist/ as-is (no hashing, no processing).
+  // This is how icons/icon16.png ends up at dist/icons/icon16.png, which matches
+  // the paths declared in manifest.json.
+  publicDir: path.resolve(__dirname, "public"),
   plugins: [
     react(),
     webExtension({
