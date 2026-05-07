@@ -23,9 +23,6 @@ export default defineConfig({
       // manifest.json is the single source of truth for all entry points.
       // No popup entry — the widget is mounted by the content script instead.
       manifest: path.resolve(__dirname, "manifest.json"),
-      webExtConfig: {
-        startUrl: "https://www.google.com",
-      },
     }),
   ],
   resolve: {
