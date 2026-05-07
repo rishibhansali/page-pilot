@@ -1,7 +1,4 @@
-# CI/CD workflow skeleton for the Page Pilot FastAPI backend.
-# Runs tests on every push and PR; deploy step is stubbed for future hosting config.
-
-name: Backend — Test & Deploy
+name: Backend - Test and Deploy
 
 on:
   push:
@@ -37,14 +34,9 @@ jobs:
       - name: Run tests
         working-directory: backend
         env:
-          # Use a dummy key in CI — tests should mock Anthropic calls.
           ANTHROPIC_API_KEY: sk-ant-test-key
-        run: pytest -v --ignore=tests || echo "No tests yet — skipping"
+        run: pytest -v || echo "No tests yet - skipping"
 
-  # ---------------------------------------------------------------------------
-  # Deploy — stub. Fill in when you choose a hosting provider.
-  # Suggested providers: Railway, Render, Fly.io, AWS Lambda.
-  # ---------------------------------------------------------------------------
   deploy:
     name: Deploy to production
     runs-on: ubuntu-latest
@@ -55,5 +47,5 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Deploy (stub — configure your hosting provider here)
-        run: echo "TODO: add deploy step for your hosting provider"
+      - name: Deploy stub
+        run: echo "TODO - add deploy step for Railway"
