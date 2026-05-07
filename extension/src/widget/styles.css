@@ -1,0 +1,11 @@
+/* Widget stylesheet — compiled by Tailwind and injected as a string into the Shadow DOM.
+   All rules are scoped to the shadow root, never touching the host page's styles. */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Ensure fixed-positioned widget elements are stacked above everything on the host page. */
+:host {
+  all: initial;
+}
