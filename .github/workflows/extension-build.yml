@@ -32,7 +32,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: extension
-        run: npm ci
+        run: npm install
 
       - name: Type check
         working-directory: extension
@@ -41,7 +41,7 @@ jobs:
       - name: Build extension
         working-directory: extension
         env:
-          VITE_BACKEND_URL: ${{ secrets.VITE_BACKEND_URL }}
+          VITE_BACKEND_URL: ${{ secrets.VITE_BACKEND_URL || 'http://localhost:8000' }}
         run: npm run build
 
       - name: Package extension zip
