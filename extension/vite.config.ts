@@ -43,6 +43,11 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     sourcemap: process.env.NODE_ENV !== "production",
+    // esnext: use native browser features, no down-transpilation that can introduce eval.
+    // minify: false: prevents Terser/esbuild from emitting eval()-based optimizations
+    // that strict host-page Content Security Policies block in content scripts.
+    target: "esnext",
+    minify: false,
     rollupOptions: {
       output: {
         // Keep asset names predictable so web_accessible_resources: ["assets/*"]
