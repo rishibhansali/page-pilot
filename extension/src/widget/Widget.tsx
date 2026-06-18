@@ -55,11 +55,19 @@ export default function Widget(): React.JSX.Element | null {
     pos.x + BUTTON_SIZE / 2 < window.innerWidth / 2 ? "left" : "right";
 
   // On mount, restore open/closed state from chrome.storage.session.
+  // The .catch() ensures isReady is always set to true even if storage
+  // fails — without it the widget returns null forever.
   useEffect(() => {
-    loadPersistedState().then((stored) => {
-      setIsOpen(stored.isOpen);
-      setIsReady(true);
-    });
+    loadPersistedState()
+      .then((stored) => {
+        setIsOpen(stored.isOpen);
+        setIsReady(true);
+      })
+      .catch((err: unknown) => {
+        console.error("[PagePilot] Failed to load state:", err);
+        setIsOpen(false);
+        setIsReady(true);
+      });
   }, []);
 
   // Persist isOpen to storage whenever it changes so the next page load restores it.

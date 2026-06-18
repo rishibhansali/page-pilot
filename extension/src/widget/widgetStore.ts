@@ -24,14 +24,29 @@ const getStorageKey = (): string => `pagepilot_${location.hostname}`;
  * Loads persisted widget state from chrome.storage.session.
  * Falls back to defaults when no state is stored for this hostname.
  * Also updates the in-memory cache so synchronous reads stay current.
+ * Wrapped in try/catch so a storage quota error or unexpected data shape
+ * never leaves the widget stuck in a non-rendered state.
  */
 export async function loadPersistedState(): Promise<PersistedState> {
-  const key = getStorageKey();
-  const result = await chrome.storage.session.get(key);
-  const state =
-    (result[key] as PersistedState | undefined) ?? { isOpen: false, messages: [] };
-  _cachedState = state;
-  return state;
+  try {
+    const key = getStorageKey();
+    const result = await chrome.storage.session.get(key);
+    const stored = result[key];
+    if (stored && typeof stored === "object") {
+      const state: PersistedState = {
+        isOpen: (stored as Record<string, unknown>).isOpen === true,
+        messages: Array.isArray((stored as Record<string, unknown>).messages)
+          ? ((stored as Record<string, unknown>).messages as ChatMessage[])
+          : [],
+      };
+      _cachedState = state;
+      return state;
+    }
+    return { isOpen: false, messages: [] };
+  } catch (err) {
+    console.error("[PagePilot] Storage error in loadPersistedState:", err);
+    return { isOpen: false, messages: [] };
+  }
 }
 
 /**

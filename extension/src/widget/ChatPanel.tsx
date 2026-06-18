@@ -238,12 +238,17 @@ export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
      * Load messages saved by the previous content script instance on this hostname.
      * Runs once on mount so chat history survives full-page navigations.
      */
-    loadPersistedState().then((stored) => {
-      if (stored.messages.length > 0) {
-        dispatch({ type: "SET_MESSAGES", messages: stored.messages });
-      }
-      setIsLoaded(true);
-    });
+    loadPersistedState()
+      .then((stored) => {
+        if (stored.messages.length > 0) {
+          dispatch({ type: "SET_MESSAGES", messages: stored.messages });
+        }
+        setIsLoaded(true);
+      })
+      .catch((err: unknown) => {
+        console.error("[PagePilot] Failed to load messages:", err);
+        setIsLoaded(true);
+      });
   }, []);
 
   // ---------------------------------------------------------------------------
