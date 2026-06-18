@@ -140,25 +140,35 @@ function getLabel(el: Element): string | null {
  */
 function buildCssPath(el: Element): string | null {
   const tag = el.tagName.toLowerCase();
-  // Filter class names that start with digits — invalid in CSS without escaping.
+  // Filter classes that start with digits (invalid in CSS) and classes that
+  // contain colons (Tailwind responsive/variant prefixes like sm:flex, hover:bg-blue)
+  // — unescaped colons are invalid in querySelectorAll selectors.
   const classes = Array.from(el.classList)
-    .filter((c) => /^[a-zA-Z_-]/.test(c))
+    .filter((c) => /^[a-zA-Z_-]/.test(c) && !c.includes(":"))
     .slice(0, 3);
 
   const selfSel = classes.length ? `${tag}.${classes.join(".")}` : tag;
-  if (document.querySelectorAll(selfSel).length === 1) return selfSel;
+  try {
+    if (document.querySelectorAll(selfSel).length === 1) return selfSel;
+  } catch {
+    return null;
+  }
 
   const parent = el.parentElement;
   if (parent && parent !== document.body) {
     const ptag = parent.tagName.toLowerCase();
     const pclasses = Array.from(parent.classList)
-      .filter((c) => /^[a-zA-Z_-]/.test(c))
+      .filter((c) => /^[a-zA-Z_-]/.test(c) && !c.includes(":"))
       .slice(0, 2);
     const parentSel = pclasses.length
       ? `${ptag}.${pclasses.join(".")}`
       : ptag;
     const combined = `${parentSel} > ${selfSel}`;
-    if (document.querySelectorAll(combined).length === 1) return combined;
+    try {
+      if (document.querySelectorAll(combined).length === 1) return combined;
+    } catch {
+      return null;
+    }
   }
 
   return null;
