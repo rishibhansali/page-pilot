@@ -25,7 +25,7 @@ const DRAG_THRESHOLD = 5;
 // Component
 // ---------------------------------------------------------------------------
 
-export default function Widget(): React.JSX.Element {
+export default function Widget(): React.JSX.Element | null {
   // Position is stored as absolute viewport coords (left/top).
   // Default: right edge, vertically centered.
   const [pos, setPos] = useState<{ x: number; y: number }>(() => ({
