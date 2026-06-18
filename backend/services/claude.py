@@ -3,6 +3,7 @@
 # To switch: replace this file with the Claude implementation.
 # The function signature and return format stay identical.
 import json
+import re
 import ollama
 import config
 
@@ -71,7 +72,15 @@ CRITICAL RULES — FOLLOW EXACTLY:
 
 5. If you cannot find a path to the goal, return "respond" with a
    helpful message telling the user where to look manually.
----RULES END---"""
+---RULES END---
+
+CRITICAL: Your entire response must be a single JSON object.
+Start your response with { and end with }.
+Do not write anything before or after the JSON.
+Do not use markdown. Do not explain. Just JSON.
+
+Example of correct response:
+{"action":"click","selector":"/premium","explanation":"Clicking Premium link","message":null}"""
 
 _FALLBACK = {
     "action": "respond",
@@ -79,6 +88,40 @@ _FALLBACK = {
     "explanation": "Failed to parse model response",
     "message": "Something went wrong, please try again",
 }
+
+# Maximum skeleton lines sent to the model. llama3.2 produces malformed JSON
+# when the context is too large; viewport elements are already sorted first by
+# the extractor so the most actionable elements are always in the first N lines.
+_MAX_SKELETON_LINES = 40
+
+
+def _extract_json(text: str) -> dict:
+    """
+    Parses a JSON object out of the model's raw response text.
+
+    Tries in order:
+      1. Direct parse after stripping markdown fences.
+      2. Regex extraction of the first {...} block in case the model
+         prefixed or suffixed the JSON with prose.
+      3. Returns _FALLBACK if both strategies fail.
+    """
+    text = text.strip()
+    text = text.removeprefix("```json").removeprefix("```")
+    text = text.removesuffix("```").strip()
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    match = re.search(r"\{[^{}]*\}", text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
+
+    return _FALLBACK
 
 
 def get_navigation_action(
@@ -92,10 +135,16 @@ def get_navigation_action(
     Returns a dict matching NavigateResponse fields.
     Uses a proper system message (Ollama supports the system role natively).
     """
+    # Trim to the most important elements so llama3.2 doesn't lose the JSON
+    # format under a long context. Viewport elements are sorted first by the
+    # extractor so the top 40 lines are the ones the user can actually see.
+    lines = dom_skeleton.strip().split("\n")
+    trimmed_skeleton = "\n".join(lines[:_MAX_SKELETON_LINES])
+
     user_content = (
         f"Goal: {user_message}\n"
         f"Current URL: {current_url}\n\n"
-        f"Current page elements:\n{dom_skeleton}\n\n"
+        f"Current page elements:\n{trimmed_skeleton}\n\n"
         "---\n"
         "REMINDER: Your selector MUST be copied exactly from the skeleton above. "
         "Do not construct CSS selectors yourself. "
@@ -116,10 +165,4 @@ def get_navigation_action(
     )
 
     text = response.message.content.strip()
-    text = text.removeprefix("```json").removeprefix("```")
-    text = text.removesuffix("```").strip()
-
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return _FALLBACK
+    return _extract_json(text)
