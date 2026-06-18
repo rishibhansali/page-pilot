@@ -61,9 +61,11 @@ chrome.runtime.onConnect.addListener((port) => {
 // ---------------------------------------------------------------------------
 
 chrome.runtime.onMessage.addListener((msg: unknown) => {
-  const m = msg as { type?: string; payload?: { userMessage?: string } };
+  const m = msg as { type?: string; payload?: { userMessage?: string; success?: boolean; message?: string } };
   if (m.type === "USER_MESSAGE" && m.payload?.userMessage) {
     handleUserMessage(m.payload.userMessage);
+  } else if (m.type === "ACTION_COMPLETE") {
+    console.log("[PagePilot] Action complete:", m.payload);
   }
 });
 

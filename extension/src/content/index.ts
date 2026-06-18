@@ -9,10 +9,10 @@ import type {
   ContentToBackground,
   DomSnapshot,
   SnapshotElement,
-  PilotAction,
 } from "@/types";
 import { mountWidget } from "@/widget/index";
 import { extractPageSkeleton } from "./domExtractor";
+import { executeAction, type ActionResponse } from "./actionExecutor";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -47,24 +47,14 @@ chrome.runtime.onMessage.addListener(
       sendResponse(response);
     } else if (msg.type === "EXECUTE_ACTION") {
       console.log("[PagePilot] Action received:", msg.action);
-      executeAction(msg.action)
-        .then(() => {
-          const response: ContentToBackground = {
-            type: "ACTION_DONE",
-            success: true,
-          };
-          sendResponse(response);
-        })
-        .catch((err: unknown) => {
-          const error = err instanceof Error ? err.message : String(err);
-          const response: ContentToBackground = {
-            type: "ACTION_DONE",
-            success: false,
-            error,
-          };
-          sendResponse(response);
-        });
-      // Return true to signal async response.
+      // Cast to ActionResponse — the backend uses selector-based actions.
+      executeAction(msg.action as unknown as ActionResponse).then((result) => {
+        console.log("[PagePilot] Execute result:", result);
+        chrome.runtime.sendMessage({
+          type: "ACTION_COMPLETE",
+          payload: result,
+        } satisfies ContentToBackground);
+      });
       return true;
     }
   }
@@ -180,75 +170,6 @@ function isInViewport(rect: DOMRect): boolean {
  */
 function estimateTokens(elements: SnapshotElement[]): number {
   return Math.ceil(JSON.stringify(elements).length / 4);
-}
-
-// ---------------------------------------------------------------------------
-// Action executor
-// ---------------------------------------------------------------------------
-
-/**
- * Executes a single action on the DOM.
- * Throws if the target element is not found or the action type is unexpected.
- */
-async function executeAction(action: PilotAction): Promise<void> {
-  switch (action.action) {
-    case "click": {
-      const el = findByPilotId(action.targetId);
-      el.click();
-      break;
-    }
-    case "type": {
-      const el = findByPilotId(action.targetId);
-      if (
-        !(el instanceof HTMLInputElement) &&
-        !(el instanceof HTMLTextAreaElement)
-      ) {
-        throw new Error(`Element ${action.targetId} is not an input`);
-      }
-      el.focus();
-      el.value = action.text;
-      // Dispatch native input event so React/Vue listeners fire.
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-      break;
-    }
-    case "scroll": {
-      const delta = action.direction === "down" ? action.px : -action.px;
-      window.scrollBy({ top: delta, behavior: "smooth" });
-      // Give the scroll animation time to settle.
-      await sleep(600);
-      break;
-    }
-    // "navigate", "done", and "ask" are handled by the background worker.
-    case "navigate":
-    case "done":
-    case "ask":
-      break;
-  }
-}
-
-/**
- * Finds an element by its data-pilot-id attribute.
- * Throws a descriptive error if the element is missing.
- */
-function findByPilotId(pilotId: string): HTMLElement {
-  const el = document.querySelector<HTMLElement>(
-    `[${PILOT_ID_ATTR}="${pilotId}"]`
-  );
-  if (!el) {
-    throw new Error(
-      `Element with pilot ID "${pilotId}" not found. The page may have changed.`
-    );
-  }
-  return el;
-}
-
-/**
- * Returns a promise that resolves after `ms` milliseconds.
- * Used to wait for animations or network requests triggered by DOM actions.
- */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // ---------------------------------------------------------------------------

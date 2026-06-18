@@ -116,7 +116,8 @@ export type BackgroundToContent =
 /** Messages the content script sends back to the background. */
 export type ContentToBackground =
   | { type: "SNAPSHOT_RESULT"; snapshot: DomSnapshot }
-  | { type: "ACTION_DONE"; success: boolean; error?: string };
+  | { type: "ACTION_DONE"; success: boolean; error?: string }
+  | { type: "ACTION_COMPLETE"; payload: { success: boolean; message: string } };
 
 // ---------------------------------------------------------------------------
 // API types (extension ↔ backend)
