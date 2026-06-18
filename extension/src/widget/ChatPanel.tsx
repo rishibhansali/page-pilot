@@ -3,7 +3,7 @@
 // Manages the Chrome runtime port connection to the background service worker
 // and converts background messages into ChatMessage objects for display.
 
-import React, { useCallback, useEffect, useRef, useReducer, useState } from "react";
+import React, { useCallback, useEffect, useRef, useReducer } from "react";
 import type {
   BackgroundToPopup,
   ChatMessage,
@@ -169,11 +169,12 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
 // ---------------------------------------------------------------------------
 
 export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
-  // Messages start empty; the useEffect below loads them from storage asynchronously.
-  const [state, dispatch] = useReducer(panelReducer, initialState);
-  // isLoaded prevents the save effect from overwriting storage with an empty array
-  // before the async load has completed.
-  const [isLoaded, setIsLoaded] = useState(false);
+  // Lazy init: restore persisted messages from sessionStorage synchronously so
+  // chat history is present on the first render after a page navigation.
+  const [state, dispatch] = useReducer(panelReducer, undefined, () => ({
+    ...initialState,
+    messages: loadPersistedState().messages,
+  }));
   const portRef = useRef<chrome.runtime.Port | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -230,36 +231,13 @@ export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
   }, []);
 
   // ---------------------------------------------------------------------------
-  // Restore messages from chrome.storage.session on first mount
+  // Persist messages to sessionStorage on every change
   // ---------------------------------------------------------------------------
 
   useEffect(() => {
-    /**
-     * Load messages saved by the previous content script instance on this hostname.
-     * Runs once on mount so chat history survives full-page navigations.
-     */
-    loadPersistedState()
-      .then((stored) => {
-        if (stored.messages.length > 0) {
-          dispatch({ type: "SET_MESSAGES", messages: stored.messages });
-        }
-        setIsLoaded(true);
-      })
-      .catch((err: unknown) => {
-        console.error("[PagePilot] Failed to load messages:", err);
-        setIsLoaded(true);
-      });
-  }, []);
-
-  // ---------------------------------------------------------------------------
-  // Persist messages to chrome.storage.session on every change
-  // ---------------------------------------------------------------------------
-
-  useEffect(() => {
-    if (!isLoaded) return;
-    // isOpen is always true here because ChatPanel is only rendered when open.
-    void savePersistedState({ isOpen: true, messages: state.messages });
-  }, [state.messages, isLoaded]);
+    // isOpen is always true here — ChatPanel only renders when the widget is open.
+    savePersistedState({ isOpen: true, messages: state.messages });
+  }, [state.messages]);
 
   // ---------------------------------------------------------------------------
   // Navigation event listeners (dispatched by the content script)

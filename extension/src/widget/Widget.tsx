@@ -25,18 +25,15 @@ const DRAG_THRESHOLD = 5;
 // Component
 // ---------------------------------------------------------------------------
 
-export default function Widget(): React.JSX.Element | null {
+export default function Widget(): React.JSX.Element {
   // Position is stored as absolute viewport coords (left/top).
   // Default: right edge, vertically centered.
   const [pos, setPos] = useState<{ x: number; y: number }>(() => ({
     x: window.innerWidth - EDGE_MARGIN - BUTTON_SIZE,
     y: window.innerHeight / 2 - BUTTON_SIZE / 2,
   }));
-  // isOpen starts false; the real value is loaded asynchronously from storage.
-  const [isOpen, setIsOpen] = useState(false);
-  // isReady gates rendering until the async storage load completes, preventing
-  // a flash of the wrong open/closed state on page load.
-  const [isReady, setIsReady] = useState(false);
+  // Initialise directly from sessionStorage — synchronous, no async needed.
+  const [isOpen, setIsOpen] = useState(() => loadPersistedState().isOpen);
   const [isDragging, setIsDragging] = useState(false);
 
   // Ref stores the drag origin so mousemove math is correct without stale closures.
@@ -54,28 +51,12 @@ export default function Widget(): React.JSX.Element | null {
   const side: WidgetPosition["side"] =
     pos.x + BUTTON_SIZE / 2 < window.innerWidth / 2 ? "left" : "right";
 
-  // On mount, restore open/closed state from chrome.storage.session.
-  // The .catch() ensures isReady is always set to true even if storage
-  // fails — without it the widget returns null forever.
+  // Persist isOpen to sessionStorage whenever it changes so the next page load
+  // restores the correct open/closed state. Also snapshots the current messages
+  // so the full state object is always coherent in storage.
   useEffect(() => {
-    loadPersistedState()
-      .then((stored) => {
-        setIsOpen(stored.isOpen);
-        setIsReady(true);
-      })
-      .catch((err: unknown) => {
-        console.error("[PagePilot] Failed to load state:", err);
-        setIsOpen(false);
-        setIsReady(true);
-      });
-  }, []);
-
-  // Persist isOpen to storage whenever it changes so the next page load restores it.
-  // Also snapshots the current message cache so the full state is always coherent.
-  useEffect(() => {
-    if (!isReady) return;
-    void savePersistedState({ isOpen, messages: getPersistedMessages() });
-  }, [isOpen, isReady]);
+    savePersistedState({ isOpen, messages: getPersistedMessages() });
+  }, [isOpen]);
 
   // ---------------------------------------------------------------------------
   // Drag logic
@@ -146,10 +127,6 @@ export default function Widget(): React.JSX.Element | null {
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
-
-  // Don't render anything until storage has been read — prevents a flash of
-  // the widget in the wrong state (e.g. closed when it should be open).
-  if (!isReady) return null;
 
   return (
     <>

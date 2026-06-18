@@ -1,69 +1,66 @@
-// Persistent store for widget state, backed by chrome.storage.session.
-// chrome.storage.session persists across page navigations within the same tab
-// and is cleared when the tab closes — perfect tab-scoped behavior.
+// Persistent store for widget state, backed by sessionStorage.
+// sessionStorage is accessible from content scripts (unlike chrome.storage.session),
+// is tab-scoped, survives same-tab page navigations, and is cleared on tab close.
 
 import type { ChatMessage } from "@/types";
 
-/** Shape of the data written to chrome.storage.session. */
-interface PersistedState {
+/** Shape of the data written to sessionStorage. */
+export interface PersistedState {
   isOpen: boolean;
   messages: ChatMessage[];
 }
 
-/** Module-level cache so synchronous reads reflect the most recent save. */
-let _cachedState: PersistedState = { isOpen: false, messages: [] };
-
 /**
- * Returns the storage key for the current hostname.
+ * Returns the sessionStorage key for the current hostname.
  * github.com/pricing and github.com/settings share history; different
  * domains each get their own isolated state.
  */
 const getStorageKey = (): string => `pagepilot_${location.hostname}`;
 
 /**
- * Loads persisted widget state from chrome.storage.session.
- * Falls back to defaults when no state is stored for this hostname.
- * Also updates the in-memory cache so synchronous reads stay current.
- * Wrapped in try/catch so a storage quota error or unexpected data shape
- * never leaves the widget stuck in a non-rendered state.
+ * Reads widget state from sessionStorage synchronously.
+ * Falls back to defaults if no state is stored or the data is malformed.
  */
-export async function loadPersistedState(): Promise<PersistedState> {
+export function loadPersistedState(): PersistedState {
   try {
-    const key = getStorageKey();
-    const result = await chrome.storage.session.get(key);
-    const stored = result[key];
-    if (stored && typeof stored === "object") {
-      const state: PersistedState = {
-        isOpen: (stored as Record<string, unknown>).isOpen === true,
-        messages: Array.isArray((stored as Record<string, unknown>).messages)
-          ? ((stored as Record<string, unknown>).messages as ChatMessage[])
-          : [],
-      };
-      _cachedState = state;
-      return state;
-    }
-    return { isOpen: false, messages: [] };
+    const raw = sessionStorage.getItem(getStorageKey());
+    if (!raw) return { isOpen: false, messages: [] };
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return {
+      isOpen: parsed.isOpen === true,
+      messages: Array.isArray(parsed.messages)
+        ? (parsed.messages as ChatMessage[])
+        : [],
+    };
   } catch (err) {
-    console.error("[PagePilot] Storage error in loadPersistedState:", err);
+    console.error("[PagePilot Store] Load error:", err);
     return { isOpen: false, messages: [] };
   }
 }
 
 /**
- * Saves widget state to chrome.storage.session and updates the in-memory cache.
- * Called whenever isOpen or messages change so page navigations land in the
- * correct state.
+ * Writes widget state to sessionStorage synchronously.
+ * Called whenever isOpen or messages change so navigations land in the correct state.
  */
-export async function savePersistedState(state: PersistedState): Promise<void> {
-  _cachedState = state;
-  await chrome.storage.session.set({ [getStorageKey()]: state });
+export function savePersistedState(state: PersistedState): void {
+  try {
+    sessionStorage.setItem(getStorageKey(), JSON.stringify(state));
+    console.log(
+      "[PagePilot Store] Saved:",
+      getStorageKey(),
+      state.isOpen,
+      state.messages.length,
+      "messages"
+    );
+  } catch (err) {
+    console.error("[PagePilot Store] Save error:", err);
+  }
 }
 
 /**
- * Returns the cached messages array for synchronous reads.
- * The cache is populated by loadPersistedState and kept current by every
- * savePersistedState call, so this is always up to date within one tab session.
+ * Convenience getter — reads the current messages from sessionStorage.
+ * Used by Widget.tsx when snapshotting the full state on isOpen changes.
  */
 export function getPersistedMessages(): ChatMessage[] {
-  return _cachedState.messages;
+  return loadPersistedState().messages;
 }
