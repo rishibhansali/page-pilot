@@ -6,6 +6,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { WidgetPosition } from "@/types";
 import ChatPanel from "./ChatPanel";
+import { getPersistedIsOpen, setPersistedIsOpen } from "./widgetStore";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -27,7 +28,9 @@ export default function Widget(): React.JSX.Element {
     x: window.innerWidth - EDGE_MARGIN - BUTTON_SIZE,
     y: window.innerHeight / 2 - BUTTON_SIZE / 2,
   }));
-  const [isOpen, setIsOpen] = useState(false);
+  // Initialise from the persistent store so the widget reopens in the same
+  // state after a full-page navigation (which remounts the content script).
+  const [isOpen, setIsOpen] = useState(getPersistedIsOpen);
   const [isDragging, setIsDragging] = useState(false);
 
   // Ref stores the drag origin so mousemove math is correct without stale closures.
@@ -44,6 +47,11 @@ export default function Widget(): React.JSX.Element {
   // Used by ChatPanel to know which side to open on.
   const side: WidgetPosition["side"] =
     pos.x + BUTTON_SIZE / 2 < window.innerWidth / 2 ? "left" : "right";
+
+  // Persist isOpen so a full-page navigation restores the widget to the same state.
+  useEffect(() => {
+    setPersistedIsOpen(isOpen);
+  }, [isOpen]);
 
   // ---------------------------------------------------------------------------
   // Drag logic

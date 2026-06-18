@@ -178,6 +178,8 @@ export interface ChatMessage {
   isLoading?: boolean;
   /** When true, this is a live step-progress message, not a final result. */
   isStatus?: boolean;
+  /** Set on NAVIGATION_COMPLETE messages — true for success, false for failure. */
+  success?: boolean;
 }
 
 /** Full state of one navigation session as tracked by the ChatPanel. */

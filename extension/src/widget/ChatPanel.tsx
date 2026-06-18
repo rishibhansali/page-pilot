@@ -12,6 +12,7 @@ import type {
 } from "@/types";
 import ChatMessageBubble from "./ChatMessage";
 import LoadingState from "./LoadingState";
+import { getPersistedMessages, setPersistedMessages } from "./widgetStore";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -36,6 +37,7 @@ type PanelAction =
   | { type: "SEND_MESSAGE"; content: string }
   | { type: "ADD_ASSISTANT"; content: string }
   | { type: "ADD_STATUS"; content: string }
+  | { type: "ADD_COMPLETION"; content: string; success: boolean }
   | { type: "SET_NAVIGATING"; value: boolean }
   | { type: "ASK_USER"; question: string }
   | { type: "RESOLVE_QUESTION" }
@@ -122,6 +124,17 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
         ],
       };
 
+    case "ADD_COMPLETION":
+      // Terminal message — re-enables the input.
+      return {
+        ...state,
+        isNavigating: false,
+        messages: [
+          ...state.messages,
+          makeMessage("assistant", action.content, { success: action.success }),
+        ],
+      };
+
     case "SET_NAVIGATING":
       return { ...state, isNavigating: action.value };
 
@@ -152,7 +165,11 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
 // ---------------------------------------------------------------------------
 
 export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
-  const [state, dispatch] = useReducer(panelReducer, initialState);
+  // Lazy init: restore persisted messages so chat survives close/reopen.
+  const [state, dispatch] = useReducer(panelReducer, undefined, () => ({
+    ...initialState,
+    messages: getPersistedMessages(),
+  }));
   const portRef = useRef<chrome.runtime.Port | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -224,11 +241,11 @@ export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
 
     /**
      * pagepilot-complete fires when the loop ends (success, error, or stop).
-     * Display the final message and re-enable the input.
+     * Display the final message with success/error styling and re-enable the input.
      */
     function onComplete(e: Event) {
-      const { message } = (e as CustomEvent<{ success: boolean; message: string }>).detail;
-      dispatch({ type: "ADD_ASSISTANT", content: message });
+      const { success, message } = (e as CustomEvent<{ success: boolean; message: string }>).detail;
+      dispatch({ type: "ADD_COMPLETION", content: message, success });
     }
 
     document.addEventListener("pagepilot-status", onStatus);
@@ -238,6 +255,23 @@ export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
       document.removeEventListener("pagepilot-status", onStatus);
       document.removeEventListener("pagepilot-complete", onComplete);
     };
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Persist messages to the module-level store on every change
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    setPersistedMessages(state.messages);
+  }, [state.messages]);
+
+  // ---------------------------------------------------------------------------
+  // Auto-focus the input when the panel mounts (i.e. when the user opens it)
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    const t = setTimeout(() => inputRef.current?.focus(), 100);
+    return () => clearTimeout(t);
   }, []);
 
   // ---------------------------------------------------------------------------
