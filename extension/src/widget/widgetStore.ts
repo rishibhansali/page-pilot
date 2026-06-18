@@ -1,35 +1,54 @@
-// Persistent store for widget UI state across React mount/unmount cycles.
-// Module-level variables survive the content script's lifetime (the whole tab session)
-// so chat history and open/closed state are preserved when the user toggles the widget.
+// Persistent store for widget state, backed by chrome.storage.session.
+// chrome.storage.session persists across page navigations within the same tab
+// and is cleared when the tab closes — perfect tab-scoped behavior.
 
 import type { ChatMessage } from "@/types";
 
-let _messages: ChatMessage[] = [];
-let _isOpen = false;
+/** Shape of the data written to chrome.storage.session. */
+interface PersistedState {
+  isOpen: boolean;
+  messages: ChatMessage[];
+}
 
-/** Returns the current persisted message list. */
+/** Module-level cache so synchronous reads reflect the most recent save. */
+let _cachedState: PersistedState = { isOpen: false, messages: [] };
+
+/**
+ * Returns the storage key for the current hostname.
+ * github.com/pricing and github.com/settings share history; different
+ * domains each get their own isolated state.
+ */
+const getStorageKey = (): string => `pagepilot_${location.hostname}`;
+
+/**
+ * Loads persisted widget state from chrome.storage.session.
+ * Falls back to defaults when no state is stored for this hostname.
+ * Also updates the in-memory cache so synchronous reads stay current.
+ */
+export async function loadPersistedState(): Promise<PersistedState> {
+  const key = getStorageKey();
+  const result = await chrome.storage.session.get(key);
+  const state =
+    (result[key] as PersistedState | undefined) ?? { isOpen: false, messages: [] };
+  _cachedState = state;
+  return state;
+}
+
+/**
+ * Saves widget state to chrome.storage.session and updates the in-memory cache.
+ * Called whenever isOpen or messages change so page navigations land in the
+ * correct state.
+ */
+export async function savePersistedState(state: PersistedState): Promise<void> {
+  _cachedState = state;
+  await chrome.storage.session.set({ [getStorageKey()]: state });
+}
+
+/**
+ * Returns the cached messages array for synchronous reads.
+ * The cache is populated by loadPersistedState and kept current by every
+ * savePersistedState call, so this is always up to date within one tab session.
+ */
 export function getPersistedMessages(): ChatMessage[] {
-  return _messages;
-}
-
-/**
- * Replaces the persisted message list.
- * Called reactively from ChatPanel whenever state.messages changes.
- */
-export function setPersistedMessages(messages: ChatMessage[]): void {
-  _messages = messages;
-}
-
-/** Returns whether the widget was open when the content script last ran. */
-export function getPersistedIsOpen(): boolean {
-  return _isOpen;
-}
-
-/**
- * Persists the open/closed state.
- * Called from Widget whenever isOpen changes so a full-page navigation
- * reopens the widget in the same state the user left it.
- */
-export function setPersistedIsOpen(value: boolean): void {
-  _isOpen = value;
+  return _cachedState.messages;
 }

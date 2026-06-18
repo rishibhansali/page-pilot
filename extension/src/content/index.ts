@@ -72,16 +72,32 @@ chrome.runtime.onMessage.addListener(
 
     } else if (msg.type === "STATUS_UPDATE") {
       console.log("[PagePilot] Status:", msg.payload);
-      document.dispatchEvent(
-        new CustomEvent("pagepilot-status", { detail: msg.payload })
-      );
+      // Dispatch on the shadow host so listeners inside the shadow DOM receive it
+      // without relying on composed event propagation across shadow boundaries.
+      const statusHost = document.getElementById("page-pilot-root");
+      if (statusHost) {
+        statusHost.dispatchEvent(
+          new CustomEvent("pagepilot-status", {
+            detail: msg.payload,
+            bubbles: true,
+            composed: true,
+          })
+        );
+      }
       sendResponse({ ok: true });
 
     } else if (msg.type === "NAVIGATION_COMPLETE") {
       console.log("[PagePilot] Navigation complete:", msg.payload);
-      document.dispatchEvent(
-        new CustomEvent("pagepilot-complete", { detail: msg.payload })
-      );
+      const completeHost = document.getElementById("page-pilot-root");
+      if (completeHost) {
+        completeHost.dispatchEvent(
+          new CustomEvent("pagepilot-complete", {
+            detail: msg.payload,
+            bubbles: true,
+            composed: true,
+          })
+        );
+      }
       sendResponse({ ok: true });
     }
   }

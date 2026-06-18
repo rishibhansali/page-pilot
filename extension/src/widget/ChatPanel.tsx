@@ -3,7 +3,7 @@
 // Manages the Chrome runtime port connection to the background service worker
 // and converts background messages into ChatMessage objects for display.
 
-import React, { useCallback, useEffect, useRef, useReducer } from "react";
+import React, { useCallback, useEffect, useRef, useReducer, useState } from "react";
 import type {
   BackgroundToPopup,
   ChatMessage,
@@ -12,7 +12,7 @@ import type {
 } from "@/types";
 import ChatMessageBubble from "./ChatMessage";
 import LoadingState from "./LoadingState";
-import { getPersistedMessages, setPersistedMessages } from "./widgetStore";
+import { loadPersistedState, savePersistedState } from "./widgetStore";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -41,6 +41,7 @@ type PanelAction =
   | { type: "SET_NAVIGATING"; value: boolean }
   | { type: "ASK_USER"; question: string }
   | { type: "RESOLVE_QUESTION" }
+  | { type: "SET_MESSAGES"; messages: ChatMessage[] }
   | { type: "RESET" };
 
 // ---------------------------------------------------------------------------
@@ -152,6 +153,9 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
     case "RESOLVE_QUESTION":
       return { ...state, pendingQuestion: null };
 
+    case "SET_MESSAGES":
+      return { ...state, messages: action.messages };
+
     case "RESET":
       return initialState;
 
@@ -165,11 +169,11 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
 // ---------------------------------------------------------------------------
 
 export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
-  // Lazy init: restore persisted messages so chat survives close/reopen.
-  const [state, dispatch] = useReducer(panelReducer, undefined, () => ({
-    ...initialState,
-    messages: getPersistedMessages(),
-  }));
+  // Messages start empty; the useEffect below loads them from storage asynchronously.
+  const [state, dispatch] = useReducer(panelReducer, initialState);
+  // isLoaded prevents the save effect from overwriting storage with an empty array
+  // before the async load has completed.
+  const [isLoaded, setIsLoaded] = useState(false);
   const portRef = useRef<chrome.runtime.Port | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -226,10 +230,45 @@ export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
   }, []);
 
   // ---------------------------------------------------------------------------
+  // Restore messages from chrome.storage.session on first mount
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    /**
+     * Load messages saved by the previous content script instance on this hostname.
+     * Runs once on mount so chat history survives full-page navigations.
+     */
+    loadPersistedState().then((stored) => {
+      if (stored.messages.length > 0) {
+        dispatch({ type: "SET_MESSAGES", messages: stored.messages });
+      }
+      setIsLoaded(true);
+    });
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Persist messages to chrome.storage.session on every change
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    if (!isLoaded) return;
+    // isOpen is always true here because ChatPanel is only rendered when open.
+    void savePersistedState({ isOpen: true, messages: state.messages });
+  }, [state.messages, isLoaded]);
+
+  // ---------------------------------------------------------------------------
   // Navigation event listeners (dispatched by the content script)
   // ---------------------------------------------------------------------------
 
   useEffect(() => {
+    /**
+     * Events are dispatched on the shadow host element (#page-pilot-root) by
+     * the content script. Listening here (on the same host element) avoids any
+     * shadow-boundary crossing issues that arise when using document directly.
+     */
+    const host = document.getElementById("page-pilot-root");
+    if (!host) return;
+
     /**
      * pagepilot-status fires once per loop step with { step, explanation, action }.
      * Show it as a live progress bubble without ending the navigating state.
@@ -248,22 +287,14 @@ export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
       dispatch({ type: "ADD_COMPLETION", content: message, success });
     }
 
-    document.addEventListener("pagepilot-status", onStatus);
-    document.addEventListener("pagepilot-complete", onComplete);
+    host.addEventListener("pagepilot-status", onStatus);
+    host.addEventListener("pagepilot-complete", onComplete);
 
     return () => {
-      document.removeEventListener("pagepilot-status", onStatus);
-      document.removeEventListener("pagepilot-complete", onComplete);
+      host.removeEventListener("pagepilot-status", onStatus);
+      host.removeEventListener("pagepilot-complete", onComplete);
     };
   }, []);
-
-  // ---------------------------------------------------------------------------
-  // Persist messages to the module-level store on every change
-  // ---------------------------------------------------------------------------
-
-  useEffect(() => {
-    setPersistedMessages(state.messages);
-  }, [state.messages]);
 
   // ---------------------------------------------------------------------------
   // Auto-focus the input when the panel mounts (i.e. when the user opens it)
