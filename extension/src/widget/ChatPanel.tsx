@@ -224,10 +224,14 @@ export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
       const msg: PopupToBackground = { type: "USER_ANSWER", answer: text };
       portRef.current?.postMessage(msg);
     } else {
-      // New goal — start a fresh navigation session.
+      // New goal — dispatch optimistic UI update, then send to service worker.
       dispatch({ type: "SEND_MESSAGE", content: text });
-      const msg: PopupToBackground = { type: "START_SESSION", goal: text };
-      portRef.current?.postMessage(msg);
+      chrome.runtime.sendMessage({
+        type: "USER_MESSAGE",
+        payload: { userMessage: text },
+      } as PopupToBackground);
+      // Placeholder: clear loading state after 3 s until Part 7 wires real completion.
+      setTimeout(() => dispatch({ type: "SET_NAVIGATING", value: false }), 3000);
     }
   }, [state.inputValue, state.pendingQuestion]);
 

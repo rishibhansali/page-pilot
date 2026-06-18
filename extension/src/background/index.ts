@@ -56,6 +56,79 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 // ---------------------------------------------------------------------------
+// Simple one-shot message handler — wires widget → backend for Part 3.
+// The port-based START_SESSION flow above is preserved for the full loop (Part 7+).
+// ---------------------------------------------------------------------------
+
+chrome.runtime.onMessage.addListener((msg: unknown) => {
+  const m = msg as { type?: string; payload?: { userMessage?: string } };
+  if (m.type === "USER_MESSAGE" && m.payload?.userMessage) {
+    handleUserMessage(m.payload.userMessage);
+  }
+});
+
+/**
+ * Handles a single USER_MESSAGE round-trip: get the DOM skeleton from the
+ * active tab, POST to the backend, and relay the action back to the content
+ * script for logging (Part 3) / execution (Part 4+).
+ */
+async function handleUserMessage(userMessage: string): Promise<void> {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) throw new Error("No active tab found");
+    const tabId = tab.id;
+
+    const skeletonResponse = await new Promise<{ skeleton: string; url: string }>(
+      (resolve, reject) => {
+        chrome.tabs.sendMessage(
+          tabId,
+          { type: "GET_SKELETON" } as { type: "GET_SKELETON" },
+          (response: unknown) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            resolve(response as { skeleton: string; url: string });
+          }
+        );
+      }
+    );
+
+    const { skeleton, url } = skeletonResponse;
+
+    console.log("[PagePilot] Sending to backend:", {
+      tab_id: String(tabId),
+      url,
+      user_message: userMessage,
+      dom_skeleton: skeleton,
+    });
+
+    const res = await fetch("http://localhost:8000/api/navigate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tab_id: String(tabId),
+        url,
+        user_message: userMessage,
+        dom_skeleton: skeleton,
+      }),
+    });
+
+    if (!res.ok) throw new Error(`Backend error: ${res.status} ${res.statusText}`);
+
+    const responseData = await res.json();
+    console.log("[PagePilot] Backend response:", responseData);
+
+    chrome.tabs.sendMessage(tabId, {
+      type: "EXECUTE_ACTION",
+      action: responseData as PilotAction,
+    });
+  } catch (error) {
+    console.error("[PagePilot] Error:", error);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Message handler for popup → background messages.
 // ---------------------------------------------------------------------------
 

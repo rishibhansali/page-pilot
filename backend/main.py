@@ -1,34 +1,24 @@
-# Entry point for the Page Pilot FastAPI backend.
-# Starts the app, registers routers, and configures CORS so the extension can reach the API.
-
+# FastAPI app entry point — registers CORS, routers, and the health check.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import health, navigate
-from app.core.config import settings
+import config
+from routes import navigate
 
-app = FastAPI(
-    title="Page Pilot API",
-    description="Backend service that calls Claude to determine the next navigation action.",
-    version="0.1.0",
-)
-
-# ---------------------------------------------------------------------------
-# CORS — allow requests from Chrome extensions (chrome-extension://*) and
-# localhost during development.
-# ---------------------------------------------------------------------------
+app = FastAPI(title="Page Pilot API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_origins=config.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---------------------------------------------------------------------------
-# Routers
-# ---------------------------------------------------------------------------
-
-app.include_router(health.router, tags=["health"])
 app.include_router(navigate.router, prefix="/api", tags=["navigate"])
+
+
+@app.get("/")
+def health_check() -> dict:
+    """Returns 200 OK so load balancers and CI can verify the server is up."""
+    return {"status": "ok"}

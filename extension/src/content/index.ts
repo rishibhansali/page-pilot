@@ -12,6 +12,7 @@ import type {
   PilotAction,
 } from "@/types";
 import { mountWidget } from "@/widget/index";
+import { extractPageSkeleton } from "./domExtractor";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -34,7 +35,10 @@ const INTERACTIVE_SELECTOR =
  */
 chrome.runtime.onMessage.addListener(
   (msg: BackgroundToContent, _sender, sendResponse) => {
-    if (msg.type === "GET_SNAPSHOT") {
+    if (msg.type === "GET_SKELETON") {
+      sendResponse({ skeleton: extractPageSkeleton(), url: window.location.href });
+      return true;
+    } else if (msg.type === "GET_SNAPSHOT") {
       const snapshot = buildSnapshot();
       const response: ContentToBackground = {
         type: "SNAPSHOT_RESULT",
@@ -42,6 +46,7 @@ chrome.runtime.onMessage.addListener(
       };
       sendResponse(response);
     } else if (msg.type === "EXECUTE_ACTION") {
+      console.log("[PagePilot] Action received:", msg.action);
       executeAction(msg.action)
         .then(() => {
           const response: ContentToBackground = {
@@ -245,6 +250,58 @@ function findByPilotId(pilotId: string): HTMLElement {
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+// ---------------------------------------------------------------------------
+// DOM skeleton — initial extraction + SPA refresh observer
+// ---------------------------------------------------------------------------
+
+// Log the initial page skeleton so we can verify the extractor in DevTools.
+// In a future milestone this output will be sent to the backend instead.
+console.log("[PagePilot] Initial skeleton:\n", extractPageSkeleton());
+
+/**
+ * Attributes we write ourselves — mutations to these must not trigger a
+ * re-extraction or we'd loop forever (extract → stamp id → mutation → extract…).
+ */
+const OWN_ATTRS = new Set(["data-pagepilot-id", PILOT_ID_ATTR]);
+
+/** Debounce handle for the MutationObserver re-extraction. */
+let mutationDebounce: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Watches for meaningful DOM changes (child additions/removals in the full
+ * subtree) and re-runs extractPageSkeleton() 500ms after the last mutation.
+ * This gives us automatic SPA support: when a React/Vue app re-renders after
+ * a navigation or click, we get a fresh skeleton without any extra wiring.
+ *
+ * Attribute-only mutations on our own stamped attributes are ignored to
+ * prevent the feedback loop described above.
+ */
+const skeletonObserver = new MutationObserver((mutations) => {
+  const meaningful = mutations.some(
+    (m) =>
+      !(
+        m.type === "attributes" &&
+        m.attributeName !== null &&
+        OWN_ATTRS.has(m.attributeName)
+      )
+  );
+  if (!meaningful) return;
+
+  if (mutationDebounce !== null) clearTimeout(mutationDebounce);
+  mutationDebounce = setTimeout(() => {
+    console.log(
+      "[PagePilot] DOM changed — refreshed skeleton:\n",
+      extractPageSkeleton()
+    );
+    mutationDebounce = null;
+  }, 500);
+});
+
+skeletonObserver.observe(document.body, {
+  childList: true,
+  subtree: true,
+});
 
 // ---------------------------------------------------------------------------
 // Widget mount

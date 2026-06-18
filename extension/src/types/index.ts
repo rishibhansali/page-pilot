@@ -96,7 +96,8 @@ export type PopupToBackground =
   | { type: "START_SESSION"; goal: string }
   | { type: "PAUSE_SESSION" }
   | { type: "STOP_SESSION" }
-  | { type: "USER_ANSWER"; answer: string };
+  | { type: "USER_ANSWER"; answer: string }
+  | { type: "USER_MESSAGE"; payload: { userMessage: string } };
 
 /** Messages the background sends back to the widget. */
 export type BackgroundToPopup =
@@ -109,6 +110,7 @@ export type BackgroundToPopup =
 /** Messages the background sends to the content script. */
 export type BackgroundToContent =
   | { type: "GET_SNAPSHOT" }
+  | { type: "GET_SKELETON" }
   | { type: "EXECUTE_ACTION"; action: PilotAction };
 
 /** Messages the content script sends back to the background. */
