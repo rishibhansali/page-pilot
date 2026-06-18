@@ -35,6 +35,7 @@ type PanelAction =
   | { type: "SET_INPUT"; value: string }
   | { type: "SEND_MESSAGE"; content: string }
   | { type: "ADD_ASSISTANT"; content: string }
+  | { type: "ADD_STATUS"; content: string }
   | { type: "SET_NAVIGATING"; value: boolean }
   | { type: "ASK_USER"; question: string }
   | { type: "RESOLVE_QUESTION" }
@@ -108,6 +109,16 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
         messages: [
           ...state.messages,
           makeMessage("assistant", action.content),
+        ],
+      };
+
+    case "ADD_STATUS":
+      // Status messages show live progress — keep isNavigating true.
+      return {
+        ...state,
+        messages: [
+          ...state.messages,
+          makeMessage("assistant", action.content, { isStatus: true }),
         ],
       };
 
@@ -198,6 +209,38 @@ export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
   }, []);
 
   // ---------------------------------------------------------------------------
+  // Navigation event listeners (dispatched by the content script)
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    /**
+     * pagepilot-status fires once per loop step with { step, explanation, action }.
+     * Show it as a live progress bubble without ending the navigating state.
+     */
+    function onStatus(e: Event) {
+      const { step, explanation } = (e as CustomEvent<{ step: number; explanation: string; action: string }>).detail;
+      dispatch({ type: "ADD_STATUS", content: `Step ${step}: ${explanation}` });
+    }
+
+    /**
+     * pagepilot-complete fires when the loop ends (success, error, or stop).
+     * Display the final message and re-enable the input.
+     */
+    function onComplete(e: Event) {
+      const { message } = (e as CustomEvent<{ success: boolean; message: string }>).detail;
+      dispatch({ type: "ADD_ASSISTANT", content: message });
+    }
+
+    document.addEventListener("pagepilot-status", onStatus);
+    document.addEventListener("pagepilot-complete", onComplete);
+
+    return () => {
+      document.removeEventListener("pagepilot-status", onStatus);
+      document.removeEventListener("pagepilot-complete", onComplete);
+    };
+  }, []);
+
+  // ---------------------------------------------------------------------------
   // Auto-scroll to latest message
   // ---------------------------------------------------------------------------
 
@@ -224,14 +267,13 @@ export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
       const msg: PopupToBackground = { type: "USER_ANSWER", answer: text };
       portRef.current?.postMessage(msg);
     } else {
-      // New goal — dispatch optimistic UI update, then send to service worker.
+      // New goal — optimistic UI update, then kick off the navigation loop.
       dispatch({ type: "SEND_MESSAGE", content: text });
       chrome.runtime.sendMessage({
         type: "USER_MESSAGE",
         payload: { userMessage: text },
       } as PopupToBackground);
-      // Placeholder: clear loading state after 3 s until Part 7 wires real completion.
-      setTimeout(() => dispatch({ type: "SET_NAVIGATING", value: false }), 3000);
+      // isNavigating stays true until pagepilot-complete fires.
     }
   }, [state.inputValue, state.pendingQuestion]);
 
@@ -247,8 +289,8 @@ export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
   );
 
   const handleStop = useCallback(() => {
-    const msg: PopupToBackground = { type: "STOP_SESSION" };
-    portRef.current?.postMessage(msg);
+    // STOP_NAVIGATION cancels the observe-act-observe loop in the service worker.
+    chrome.runtime.sendMessage({ type: "STOP_NAVIGATION" } as PopupToBackground);
     dispatch({ type: "SET_NAVIGATING", value: false });
   }, []);
 

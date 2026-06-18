@@ -1,8 +1,9 @@
 // Content script injected into every page by the Chrome extension.
 // Responsibilities:
-//   1. Listen for GET_SNAPSHOT messages and return a serialized DOM snapshot.
+//   1. Listen for GET_SNAPSHOT / GET_SKELETON messages and return page data.
 //   2. Listen for EXECUTE_ACTION messages and perform the requested DOM action.
-//   3. Stamp pilot IDs onto interactive elements so Claude can reference them.
+//   3. Listen for WAIT_FOR_SETTLE and resolve when the page has stabilised.
+//   4. Relay STATUS_UPDATE / NAVIGATION_COMPLETE events to the widget via CustomEvent.
 
 import type {
   BackgroundToContent,
@@ -31,34 +32,112 @@ const INTERACTIVE_SELECTOR =
 
 /**
  * Listens for messages from the background service worker and responds
- * with either a snapshot or an action result.
+ * with a snapshot, action result, or settle confirmation.
  */
 chrome.runtime.onMessage.addListener(
   (msg: BackgroundToContent, _sender, sendResponse) => {
     if (msg.type === "GET_SKELETON") {
       sendResponse({ skeleton: extractPageSkeleton(), url: window.location.href });
       return true;
+
     } else if (msg.type === "GET_SNAPSHOT") {
       const snapshot = buildSnapshot();
-      const response: ContentToBackground = {
-        type: "SNAPSHOT_RESULT",
-        snapshot,
-      };
+      const response: ContentToBackground = { type: "SNAPSHOT_RESULT", snapshot };
       sendResponse(response);
+
     } else if (msg.type === "EXECUTE_ACTION") {
       console.log("[PagePilot] Action received:", msg.action);
-      // Cast to ActionResponse — the backend uses selector-based actions.
-      executeAction(msg.action as unknown as ActionResponse).then((result) => {
+      const actionData = msg.action as unknown as ActionResponse;
+      executeAction(actionData).then((result) => {
         console.log("[PagePilot] Execute result:", result);
+        // Inform the service worker that a side-effecting action fired.
+        if (result.success && (actionData.action === "click" || actionData.action === "scroll")) {
+          chrome.runtime.sendMessage({
+            type: "PAGE_SETTLING",
+            payload: { previousUrl: document.URL },
+          } satisfies ContentToBackground);
+        }
         chrome.runtime.sendMessage({
           type: "ACTION_COMPLETE",
           payload: result,
         } satisfies ContentToBackground);
       });
       return true;
+
+    } else if (msg.type === "WAIT_FOR_SETTLE") {
+      waitForPageSettle().then(() => {
+        sendResponse({ settled: true, url: window.location.href });
+      });
+      return true;
+
+    } else if (msg.type === "STATUS_UPDATE") {
+      console.log("[PagePilot] Status:", msg.payload);
+      document.dispatchEvent(
+        new CustomEvent("pagepilot-status", { detail: msg.payload })
+      );
+      sendResponse({ ok: true });
+
+    } else if (msg.type === "NAVIGATION_COMPLETE") {
+      console.log("[PagePilot] Navigation complete:", msg.payload);
+      document.dispatchEvent(
+        new CustomEvent("pagepilot-complete", { detail: msg.payload })
+      );
+      sendResponse({ ok: true });
     }
   }
 );
+
+// ---------------------------------------------------------------------------
+// Page-settle detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns a Promise that resolves when the page has settled after a navigation
+ * or DOM change. Combines URL-change polling with a MutationObserver debounce
+ * to handle both full-page navigations and SPA route changes.
+ * Resolves unconditionally after 5 seconds as a safety net.
+ */
+export function waitForPageSettle(): Promise<void> {
+  return new Promise((resolve) => {
+    const capturedUrl = window.location.href;
+    let settled = false;
+
+    function doResolve() {
+      if (settled) return;
+      settled = true;
+      clearInterval(urlPollInterval);
+      clearTimeout(maxWaitTimeout);
+      if (mutationTimer !== null) clearTimeout(mutationTimer);
+      observer.disconnect();
+      resolve();
+    }
+
+    // Approach 1: poll every 100ms for a URL change (SPA history.pushState).
+    const urlPollInterval = setInterval(() => {
+      if (window.location.href !== capturedUrl) {
+        clearInterval(urlPollInterval);
+        // URL changed — wait for the document to finish loading then add buffer.
+        const readyCheck = setInterval(() => {
+          if (document.readyState === "complete") {
+            clearInterval(readyCheck);
+            setTimeout(doResolve, 500);
+          }
+        }, 50);
+      }
+    }, 100);
+
+    // Approach 2: MutationObserver debounce for DOM changes without a URL change.
+    let mutationTimer: ReturnType<typeof setTimeout> | null = null;
+    const observer = new MutationObserver(() => {
+      if (mutationTimer !== null) clearTimeout(mutationTimer);
+      mutationTimer = setTimeout(doResolve, 800);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    // Safety net — resolve after 5 s regardless.
+    const maxWaitTimeout = setTimeout(doResolve, 5000);
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Snapshot builder

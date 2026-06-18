@@ -38,6 +38,16 @@ let session: SessionState = {
 let popupPort: chrome.runtime.Port | null = null;
 
 // ---------------------------------------------------------------------------
+// Navigation loop state
+// ---------------------------------------------------------------------------
+
+/**
+ * Tracks which tabs currently have an active navigation loop running.
+ * The loop checks this flag before each step so Stop cancels mid-flight.
+ */
+const activeSessions = new Map<number, boolean>();
+
+// ---------------------------------------------------------------------------
 // Popup port connection — popup connects on open, disconnects on close.
 // ---------------------------------------------------------------------------
 
@@ -60,73 +70,141 @@ chrome.runtime.onConnect.addListener((port) => {
 // The port-based START_SESSION flow above is preserved for the full loop (Part 7+).
 // ---------------------------------------------------------------------------
 
-chrome.runtime.onMessage.addListener((msg: unknown) => {
-  const m = msg as { type?: string; payload?: { userMessage?: string; success?: boolean; message?: string } };
-  if (m.type === "USER_MESSAGE" && m.payload?.userMessage) {
+chrome.runtime.onMessage.addListener((msg: unknown, sender) => {
+  const m = msg as { type?: string; payload?: Record<string, unknown> };
+  if (m.type === "USER_MESSAGE" && typeof m.payload?.userMessage === "string") {
     handleUserMessage(m.payload.userMessage);
   } else if (m.type === "ACTION_COMPLETE") {
     console.log("[PagePilot] Action complete:", m.payload);
+  } else if (m.type === "PAGE_SETTLING") {
+    console.log("[PagePilot] Page settling, tab:", sender?.tab?.id);
+  } else if (m.type === "STOP_NAVIGATION") {
+    const tabId = sender?.tab?.id;
+    if (tabId !== undefined) {
+      console.log("[PagePilot] Stopping navigation for tab", tabId);
+      activeSessions.set(tabId, false);
+    }
   }
 });
 
 /**
- * Handles a single USER_MESSAGE round-trip: get the DOM skeleton from the
- * active tab, POST to the backend, and relay the action back to the content
- * script for logging (Part 3) / execution (Part 4+).
+ * Entry point for a USER_MESSAGE: resolves the active tab then hands off
+ * to startNavigationLoop. Skips if a loop is already running for that tab.
  */
 async function handleUserMessage(userMessage: string): Promise<void> {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) {
+    console.error("[PagePilot] No active tab found");
+    return;
+  }
+  const tabId = tab.id;
+
+  if (activeSessions.get(tabId)) {
+    console.log("[PagePilot] Navigation already in progress for tab", tabId);
+    return;
+  }
+
+  await startNavigationLoop(tabId, userMessage);
+}
+
+/** Shape of an action returned by the backend /api/navigate endpoint. */
+interface NavigationAction {
+  action: string;
+  selector: string | null;
+  explanation: string;
+  message: string | null;
+}
+
+/**
+ * Runs the observe → act → observe loop for a single navigation goal.
+ * After each successful action it waits for the page to settle before
+ * re-reading the DOM and asking the backend for the next step.
+ * Sends STATUS_UPDATE + NAVIGATION_COMPLETE to the content script so
+ * the widget can show live progress and re-enable the input when done.
+ */
+async function startNavigationLoop(tabId: number, userMessage: string): Promise<void> {
+  let stepCount = 0;
+  const MAX_STEPS = 10;
+  activeSessions.set(tabId, true);
+
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) throw new Error("No active tab found");
-    const tabId = tab.id;
+    while (stepCount < MAX_STEPS && activeSessions.get(tabId)) {
+      stepCount++;
 
-    const skeletonResponse = await new Promise<{ skeleton: string; url: string }>(
-      (resolve, reject) => {
-        chrome.tabs.sendMessage(
-          tabId,
-          { type: "GET_SKELETON" } as { type: "GET_SKELETON" },
-          (response: unknown) => {
-            if (chrome.runtime.lastError) {
-              reject(new Error(chrome.runtime.lastError.message));
-              return;
-            }
-            resolve(response as { skeleton: string; url: string });
-          }
-        );
+      // 1. Get a fresh skeleton from the page.
+      const skeletonResp = await sendMessageToTab(tabId, { type: "GET_SKELETON" }) as { skeleton: string; url: string };
+      const { skeleton, url: currentUrl } = skeletonResp;
+
+      console.log(`[PagePilot] Step ${stepCount}/${MAX_STEPS}`);
+      console.log("[PagePilot] Sending to backend:", { tab_id: String(tabId), url: currentUrl, user_message: userMessage });
+
+      // 2. Ask the backend for the next action.
+      const res = await fetch("http://localhost:8000/api/navigate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tab_id: String(tabId),
+          url: currentUrl,
+          user_message: userMessage,
+          dom_skeleton: skeleton,
+        }),
+      });
+      if (!res.ok) throw new Error(`Backend error: ${res.status} ${res.statusText}`);
+      const action = await res.json() as NavigationAction;
+      console.log("[PagePilot] Action:", action);
+
+      // 3. Send a live step update to the widget.
+      await sendMessageToTab(tabId, {
+        type: "STATUS_UPDATE",
+        payload: { step: stepCount, explanation: action.explanation, action: action.action },
+      });
+
+      // 4. Terminal actions — end the loop.
+      if (action.action === "done" || action.action === "respond") {
+        await sendMessageToTab(tabId, {
+          type: "NAVIGATION_COMPLETE",
+          payload: { success: action.action === "done", message: action.message ?? action.explanation },
+        });
+        activeSessions.delete(tabId);
+        return;
       }
-    );
 
-    const { skeleton, url } = skeletonResponse;
+      // 5. Execute the action in the page.
+      await sendMessageToTab(tabId, {
+        type: "EXECUTE_ACTION",
+        action: action as unknown as PilotAction,
+      });
 
-    console.log("[PagePilot] Sending to backend:", {
-      tab_id: String(tabId),
-      url,
-      user_message: userMessage,
-      dom_skeleton: skeleton,
-    });
+      // 6. Wait for the page to settle before re-reading the DOM.
+      try {
+        await sendMessageToTab(tabId, { type: "WAIT_FOR_SETTLE" });
+      } catch {
+        // Full navigation unloads the content script — wait for the tab to reload.
+        await waitForTabLoad(tabId);
+        await sleep(500);
+      }
 
-    const res = await fetch("http://localhost:8000/api/navigate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        tab_id: String(tabId),
-        url,
-        user_message: userMessage,
-        dom_skeleton: skeleton,
-      }),
-    });
+      await sleep(300);
+    }
 
-    if (!res.ok) throw new Error(`Backend error: ${res.status} ${res.statusText}`);
+    // Hit the step limit.
+    await sendMessageToTab(tabId, {
+      type: "NAVIGATION_COMPLETE",
+      payload: {
+        success: false,
+        message: "I reached the step limit without completing the goal. Please try navigating manually.",
+      },
+    }).catch(() => { /* content script may be gone */ });
 
-    const responseData = await res.json();
-    console.log("[PagePilot] Backend response:", responseData);
-
-    chrome.tabs.sendMessage(tabId, {
-      type: "EXECUTE_ACTION",
-      action: responseData as PilotAction,
-    });
-  } catch (error) {
-    console.error("[PagePilot] Error:", error);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[PagePilot] Navigation loop error:", err);
+    sendMessageToTab(tabId, {
+      type: "NAVIGATION_COMPLETE",
+      payload: { success: false, message: `Navigation failed: ${message}` },
+    }).catch(() => { /* ignore */ });
+  } finally {
+    activeSessions.delete(tabId);
   }
 }
 
@@ -245,6 +323,34 @@ async function runNavigationLoop(): Promise<void> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Wraps chrome.tabs.sendMessage in a Promise that rejects after 10 seconds.
+ * Used by startNavigationLoop so each step is a clean async/await call.
+ */
+function sendMessageToTab(tabId: number, message: BackgroundToContent): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      reject(new Error(`Tab message timed out: ${message.type}`));
+    }, 10000);
+
+    chrome.tabs.sendMessage(tabId, message, (response: unknown) => {
+      clearTimeout(timeoutId);
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+/**
+ * Returns a Promise that resolves after ms milliseconds.
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /**
  * Sends a message to the content script and waits for its response.

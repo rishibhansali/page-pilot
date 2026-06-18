@@ -96,6 +96,7 @@ export type PopupToBackground =
   | { type: "START_SESSION"; goal: string }
   | { type: "PAUSE_SESSION" }
   | { type: "STOP_SESSION" }
+  | { type: "STOP_NAVIGATION" }
   | { type: "USER_ANSWER"; answer: string }
   | { type: "USER_MESSAGE"; payload: { userMessage: string } };
 
@@ -111,13 +112,18 @@ export type BackgroundToPopup =
 export type BackgroundToContent =
   | { type: "GET_SNAPSHOT" }
   | { type: "GET_SKELETON" }
-  | { type: "EXECUTE_ACTION"; action: PilotAction };
+  | { type: "EXECUTE_ACTION"; action: PilotAction }
+  | { type: "WAIT_FOR_SETTLE" }
+  | { type: "STATUS_UPDATE"; payload: { step: number; explanation: string; action: string } }
+  | { type: "NAVIGATION_COMPLETE"; payload: { success: boolean; message: string } }
+  | { type: "STOP_NAVIGATION" };
 
 /** Messages the content script sends back to the background. */
 export type ContentToBackground =
   | { type: "SNAPSHOT_RESULT"; snapshot: DomSnapshot }
   | { type: "ACTION_DONE"; success: boolean; error?: string }
-  | { type: "ACTION_COMPLETE"; payload: { success: boolean; message: string } };
+  | { type: "ACTION_COMPLETE"; payload: { success: boolean; message: string } }
+  | { type: "PAGE_SETTLING"; payload: { previousUrl: string } };
 
 // ---------------------------------------------------------------------------
 // API types (extension ↔ backend)
@@ -170,6 +176,8 @@ export interface ChatMessage {
   timestamp: number;
   /** When true, renders a LoadingState bubble instead of content. */
   isLoading?: boolean;
+  /** When true, this is a live step-progress message, not a final result. */
+  isStatus?: boolean;
 }
 
 /** Full state of one navigation session as tracked by the ChatPanel. */
