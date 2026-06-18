@@ -279,6 +279,7 @@ export function extractPageSkeleton(): string {
 /**
  * Resolves one of our generated selector strings back to a live DOM element.
  * Handles the pathname shorthand ("/pricing") used for same-origin links.
+ * Falls back to looser matching strategies before giving up.
  * Returns null if no matching element is found.
  */
 export function findElementBySelector(selector: string): Element | null {
@@ -288,15 +289,52 @@ export function findElementBySelector(selector: string): Element | null {
       document.querySelector<HTMLAnchorElement>(`a[href='${selector}']`) ??
       // Some sites append query strings; prefix-match as fallback
       document.querySelector<HTMLAnchorElement>(`a[href^='${selector}']`) ??
+      // Fallback 2 — loose substring match on any visible anchor
+      findVisibleAnchorByHrefSubstring(selector) ??
       null
     );
   }
 
   // Standard CSS selector — wrap in try/catch because a malformed selector
   // would otherwise throw and crash the content script.
+  let result: Element | null = null;
   try {
-    return document.querySelector(selector);
+    result = document.querySelector(selector);
   } catch {
-    return null;
+    result = null;
   }
+
+  if (result) return result;
+
+  // Fallback 1 — href pattern extraction:
+  // The model sometimes invents compound selectors like `nav a[href*='/pricing']`.
+  // Pull the path out of the href attribute pattern and do a visible-link search.
+  if (selector.includes("href*=") || selector.includes("href=")) {
+    const pathMatch = selector.match(/href[*^$]?=["']?([^"'\]]+)/);
+    if (pathMatch) {
+      return findVisibleAnchorByHrefSubstring(pathMatch[1]) ?? null;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Returns the first visible <a> whose href or pathname includes `path`.
+ * Used as a last-resort fallback when a generated CSS selector fails to match.
+ */
+function findVisibleAnchorByHrefSubstring(path: string): HTMLAnchorElement | null {
+  const anchors = Array.from(document.querySelectorAll<HTMLAnchorElement>("a[href]"));
+  for (const anchor of anchors) {
+    try {
+      const url = new URL(anchor.href, window.location.href);
+      if (url.pathname.includes(path) || anchor.href.includes(path)) {
+        const rect = anchor.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) return anchor;
+      }
+    } catch {
+      // Non-navigable hrefs (javascript:void(0), mailto:, etc.) — skip
+    }
+  }
+  return null;
 }

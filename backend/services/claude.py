@@ -20,10 +20,10 @@ markdown, no code fences. Just raw JSON.
 The JSON must have this exact structure:
 
 If you can see an element to click that moves toward the goal:
-{"action": "click", "selector": "<exact selector from skeleton>", "explanation": "<what you are clicking and why>"}
+{"action": "click", "selector": "<exact selector from skeleton>", "explanation": "<what you are clicking and why>", "message": null}
 
 If you need to scroll to reveal more content:
-{"action": "scroll", "selector": null, "explanation": "<why you are scrolling>"}
+{"action": "scroll", "selector": null, "explanation": "<why you are scrolling>", "message": null}
 
 If the goal is already achieved or you have arrived at the right place:
 {"action": "done", "selector": null, "explanation": "<what was achieved>", "message": "<friendly message to show the user>"}
@@ -31,17 +31,47 @@ If the goal is already achieved or you have arrived at the right place:
 If you cannot find a path to the goal after reviewing the skeleton:
 {"action": "respond", "selector": null, "explanation": "<what you tried>", "message": "<helpful message telling user where to look manually>"}
 
-Rules:
-- ONLY use selectors that appear exactly in the skeleton provided
-- NEVER invent selectors that are not in the skeleton
-- If you already clicked something in a previous step and it did not \
-  help, do not click it again — try a different element
-- Prefer more specific links/buttons over generic ones
-- If you are unsure between two options, pick the one whose label most \
-  closely matches the user's goal
-- Maximum 10 steps — if conversation history shows 10 or more assistant \
-  turns, return a "respond" action telling the user you could not \
-  complete the navigation"""
+---RULES START---
+CRITICAL RULES — FOLLOW EXACTLY:
+
+1. SELECTOR RULE — THIS IS THE MOST IMPORTANT RULE:
+   You MUST copy the selector EXACTLY as it appears in the skeleton.
+   Character for character. No modifications.
+
+   The skeleton lines look like:
+   [link] "Pricing" /pricing
+   [button] "Sign In" #signin-btn
+   [button] "Platform" [data-pagepilot-id='pp-3']
+
+   The selector is the LAST part of each line:
+   /pricing
+   #signin-btn
+   [data-pagepilot-id='pp-3']
+
+   CORRECT example:
+   Skeleton has: [link] "Pricing" /pricing
+   You return: {"action": "click", "selector": "/pricing", ...}
+
+   WRONG examples — NEVER do these:
+   {"selector": "#header-nav a[href*='/pricing']"}  <- INVENTED
+   {"selector": ".pricing-link"}                     <- INVENTED
+   {"selector": "a[href='/pricing']"}                <- INVENTED
+
+   If you cannot find an exact selector from the skeleton that
+   moves toward the goal, return a "respond" action instead.
+   NEVER invent a selector that is not in the skeleton.
+
+2. If you already clicked something in a previous step and it did
+   not help, do not click it again — try a different element.
+
+3. Prefer elements whose label most closely matches the user's goal.
+
+4. Maximum 10 steps — if conversation history shows 10 or more
+   assistant turns, return a "respond" action.
+
+5. If you cannot find a path to the goal, return "respond" with a
+   helpful message telling the user where to look manually.
+---RULES END---"""
 
 _FALLBACK = {
     "action": "respond",
@@ -65,7 +95,12 @@ def get_navigation_action(
     user_content = (
         f"Goal: {user_message}\n"
         f"Current URL: {current_url}\n\n"
-        f"Current page elements:\n{dom_skeleton}"
+        f"Current page elements:\n{dom_skeleton}\n\n"
+        "---\n"
+        "REMINDER: Your selector MUST be copied exactly from the skeleton above. "
+        "Do not construct CSS selectors yourself. "
+        "Only use what appears after the label in each skeleton line.\n"
+        "---"
     )
 
     messages = (
