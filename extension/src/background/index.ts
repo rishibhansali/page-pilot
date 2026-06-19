@@ -116,6 +116,25 @@ interface NavigationAction {
 }
 
 /**
+ * Wraps fetch with a 30-second AbortController timeout.
+ * Rejects with a DOMException named "AbortError" if the deadline is exceeded,
+ * which the caller can detect to show a user-friendly timeout message.
+ */
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit,
+  timeoutMs: number = 30000
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
  * Runs the observe → act → observe loop for a single navigation goal.
  * After each successful action it waits for the page to settle before
  * re-reading the DOM and asking the backend for the next step.
@@ -139,16 +158,33 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
       console.log("[PagePilot] Sending to backend:", { tab_id: String(tabId), url: currentUrl, user_message: userMessage });
 
       // 2. Ask the backend for the next action.
-      const res = await fetch("http://localhost:8000/api/navigate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tab_id: String(tabId),
-          url: currentUrl,
-          user_message: userMessage,
-          dom_skeleton: skeleton,
-        }),
-      });
+      let res: Response;
+      try {
+        res = await fetchWithTimeout("http://localhost:8000/api/navigate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tab_id: String(tabId),
+            url: currentUrl,
+            user_message: userMessage,
+            dom_skeleton: skeleton,
+          }),
+        });
+      } catch (fetchErr) {
+        const isTimeout =
+          fetchErr instanceof DOMException && fetchErr.name === "AbortError";
+        await sendMessageToTab(tabId, {
+          type: "NAVIGATION_COMPLETE",
+          payload: {
+            success: false,
+            message: isTimeout
+              ? "Navigation timed out — Ollama may be slow or the backend may be down. Please try again."
+              : `Network error: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
+          },
+        }).catch(() => { /* content script may be gone */ });
+        activeSessions.delete(tabId);
+        return;
+      }
       if (!res.ok) throw new Error(`Backend error: ${res.status} ${res.statusText}`);
       const action = await res.json() as NavigationAction;
       console.log("[PagePilot] Action:", action);

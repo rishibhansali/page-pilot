@@ -45,13 +45,6 @@ export function loadPersistedState(): PersistedState {
 export function savePersistedState(state: PersistedState): void {
   try {
     sessionStorage.setItem(getStorageKey(), JSON.stringify(state));
-    console.log(
-      "[PagePilot Store] Saved:",
-      getStorageKey(),
-      state.isOpen,
-      state.messages.length,
-      "messages"
-    );
   } catch (err) {
     console.error("[PagePilot Store] Save error:", err);
   }

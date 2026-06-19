@@ -5,6 +5,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import Widget from "./Widget";
+import ErrorBoundary from "./ErrorBoundary";
 // Import compiled CSS as an inline string so we can inject it into the shadow root.
 // The ?inline suffix is a Vite feature — Tailwind compiles the CSS at build time,
 // Vite returns it as a plain string rather than injecting it into <head>.
@@ -55,7 +56,9 @@ export function mountWidget(): void {
 
   ReactDOM.createRoot(mountPoint).render(
     <React.StrictMode>
-      <Widget />
+      <ErrorBoundary>
+        <Widget />
+      </ErrorBoundary>
     </React.StrictMode>
   );
 }

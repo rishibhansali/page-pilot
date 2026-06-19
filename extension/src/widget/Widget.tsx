@@ -144,47 +144,41 @@ export default function Widget(): React.JSX.Element {
 
   return (
     <>
-      {/* Floating launcher button */}
-      <div
-        role="button"
-        aria-label="Open Page Pilot"
-        onMouseDown={handleMouseDown}
-        style={{
-          position: "fixed",
-          left: pos.x,
-          top: pos.y,
-          width: BUTTON_SIZE,
-          height: BUTTON_SIZE,
-          zIndex: 2147483647,
-          cursor: isDragging ? "grabbing" : "grab",
-          userSelect: "none",
-        }}
-        className={[
-          "flex items-center justify-center rounded-full shadow-2xl",
-          "bg-navy border-2 border-pilot-blue",
-          "transition-transform duration-150",
-          isOpen ? "scale-90" : "hover:scale-110",
-        ].join(" ")}
-      >
-        {/* Plane icon */}
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 24 24"
-          fill="white"
-          className="w-6 h-6"
-          aria-hidden="true"
+      {/* Floating launcher button — hidden while chat panel is open */}
+      {!isOpen && (
+        <div
+          role="button"
+          aria-label="Open Page Pilot"
+          onMouseDown={handleMouseDown}
+          style={{
+            position: "fixed",
+            left: pos.x,
+            top: pos.y,
+            width: BUTTON_SIZE,
+            height: BUTTON_SIZE,
+            zIndex: 2147483647,
+            cursor: isDragging ? "grabbing" : "grab",
+            userSelect: "none",
+          }}
+          className={[
+            "flex items-center justify-center rounded-full shadow-2xl",
+            "bg-navy border-2 border-pilot-blue",
+            "transition-transform duration-150",
+            "hover:scale-110",
+          ].join(" ")}
         >
-          <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
-        </svg>
-
-        {/* Pulse ring shown while panel is open */}
-        {isOpen && (
-          <span
-            className="absolute inset-0 rounded-full border-2 border-pilot-blue animate-ping opacity-40"
+          {/* Plane icon */}
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="white"
+            className="w-6 h-6"
             aria-hidden="true"
-          />
-        )}
-      </div>
+          >
+            <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
+          </svg>
+        </div>
+      )}
 
       {/* Chat panel — only rendered when open to avoid background port connections */}
       {isOpen && (
