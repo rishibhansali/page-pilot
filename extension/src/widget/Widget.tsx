@@ -58,6 +58,20 @@ export default function Widget(): React.JSX.Element {
     savePersistedState({ isOpen, messages: getPersistedMessages() });
   }, [isOpen]);
 
+  // Clamp position when the viewport shrinks (e.g. DevTools docks to bottom/side).
+  // Only adjusts coordinates that would push the button off-screen; leaves the
+  // button alone when there's enough room.
+  useEffect(() => {
+    function handleResize() {
+      setPos((prev) => ({
+        x: Math.min(prev.x, window.innerWidth - BUTTON_SIZE),
+        y: Math.min(prev.y, window.innerHeight - BUTTON_SIZE),
+      }));
+    }
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
   // ---------------------------------------------------------------------------
   // Drag logic
   // ---------------------------------------------------------------------------
@@ -141,6 +155,7 @@ export default function Widget(): React.JSX.Element {
           top: pos.y,
           width: BUTTON_SIZE,
           height: BUTTON_SIZE,
+          zIndex: 2147483647,
           cursor: isDragging ? "grabbing" : "grab",
           userSelect: "none",
         }}
