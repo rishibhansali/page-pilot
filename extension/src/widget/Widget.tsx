@@ -21,17 +21,20 @@ const EDGE_MARGIN = 24; // px — minimum distance from viewport edge
 /** Minimum pixel delta before a mousedown+mouseup counts as a drag, not a click. */
 const DRAG_THRESHOLD = 5;
 
+/** Right-center anchor point. Recalculated on every call so viewport dimensions are current. */
+const getDefaultPosition = (): { x: number; y: number } => ({
+  x: window.innerWidth - BUTTON_SIZE - EDGE_MARGIN,
+  y: window.innerHeight / 2 - BUTTON_SIZE / 2,
+});
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
 export default function Widget(): React.JSX.Element {
   // Position is stored as absolute viewport coords (left/top).
-  // Default: right edge, vertically centered.
-  const [pos, setPos] = useState<{ x: number; y: number }>(() => ({
-    x: window.innerWidth - EDGE_MARGIN - BUTTON_SIZE,
-    y: window.innerHeight / 2 - BUTTON_SIZE / 2,
-  }));
+  // Lazy initializer so window dimensions are read after the DOM is ready.
+  const [pos, setPos] = useState<{ x: number; y: number }>(getDefaultPosition);
   // Initialise directly from sessionStorage — synchronous, no async needed.
   const [isOpen, setIsOpen] = useState(() => loadPersistedState().isOpen);
   const [isDragging, setIsDragging] = useState(false);
@@ -58,15 +61,11 @@ export default function Widget(): React.JSX.Element {
     savePersistedState({ isOpen, messages: getPersistedMessages() });
   }, [isOpen]);
 
-  // Clamp position when the viewport shrinks (e.g. DevTools docks to bottom/side).
-  // Only adjusts coordinates that would push the button off-screen; leaves the
-  // button alone when there's enough room.
+  // Reset to the default right-center position whenever the viewport changes
+  // (DevTools open/close, window resize) so the button is always reachable.
   useEffect(() => {
     function handleResize() {
-      setPos((prev) => ({
-        x: Math.min(prev.x, window.innerWidth - BUTTON_SIZE),
-        y: Math.min(prev.y, window.innerHeight - BUTTON_SIZE),
-      }));
+      setPos(getDefaultPosition());
     }
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
@@ -182,7 +181,7 @@ export default function Widget(): React.JSX.Element {
 
       {/* Chat panel — only rendered when open to avoid background port connections */}
       {isOpen && (
-        <ChatPanel side={side} onClose={() => setIsOpen(false)} />
+        <ChatPanel side={side} onClose={() => { setIsOpen(false); setPos(getDefaultPosition()); }} />
       )}
     </>
   );
