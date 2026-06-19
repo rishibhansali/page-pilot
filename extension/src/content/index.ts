@@ -323,6 +323,32 @@ skeletonObserver.observe(document.body, {
 // Widget mount
 // ---------------------------------------------------------------------------
 
+/** Hostname + path prefix pairs for pages that are search engine result pages. */
+const SEARCH_ENGINE_PATTERNS: { hostname: string; pathStartsWith: string }[] = [
+  { hostname: "google.com",        pathStartsWith: "/search" },
+  { hostname: "www.google.com",    pathStartsWith: "/search" },
+  { hostname: "bing.com",          pathStartsWith: "/search" },
+  { hostname: "www.bing.com",      pathStartsWith: "/search" },
+  { hostname: "duckduckgo.com",    pathStartsWith: "/" },
+  { hostname: "search.yahoo.com",  pathStartsWith: "/search" },
+];
+
+/**
+ * Returns true when the current page is a search engine results page.
+ * We skip mounting the widget on these pages because the user hasn't
+ * navigated to a destination site yet and the widget would be intrusive.
+ */
+function isSearchEngineResultsPage(): boolean {
+  const { hostname, pathname } = window.location;
+  return SEARCH_ENGINE_PATTERNS.some(
+    (p) => hostname === p.hostname && pathname.startsWith(p.pathStartsWith)
+  );
+}
+
 // Mount the floating widget after all message listeners are registered,
 // so the background service worker is ready when the widget opens a port.
-mountWidget();
+if (isSearchEngineResultsPage()) {
+  console.log("[PagePilot] Skipping mount on search engine results page");
+} else {
+  mountWidget();
+}
