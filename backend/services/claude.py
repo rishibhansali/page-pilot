@@ -96,6 +96,16 @@ CRITICAL RULES — FOLLOW EXACTLY:
 
 5. If you cannot find a path to the goal, return "respond" with a
    helpful message telling the user where to look manually.
+
+6. GOAL-COMPLETION CHECK — run this after every action:
+   After each step, compare the current URL and the goal.
+   If the current page already satisfies what the user asked for
+   (e.g. they asked "go to pricing" and the current URL now contains
+   "/pricing", or they asked "open settings" and you can see a
+   settings heading on the page), you MUST return "done" immediately.
+   Do not continue clicking once the goal is reached.
+   Example: goal is "go to pricing", current URL is "example.com/pricing"
+   → return {"action":"done","selector":null,"explanation":"Arrived at pricing page","message":"You're on the pricing page!"}
 ---RULES END---
 
 CRITICAL: Your entire response must be a single JSON object.
