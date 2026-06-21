@@ -48,6 +48,30 @@ let popupPort: chrome.runtime.Port | null = null;
  */
 const activeSessions = new Map<number, boolean>();
 
+/**
+ * Interval handle for the service-worker keepalive ping.
+ * A plain setTimeout (sleep) has no I/O, so MV3 can idle-terminate the SW
+ * between loop steps. Touching chrome.storage on a regular cadence resets the
+ * idle timer and keeps the SW alive for the full duration of the loop.
+ */
+let keepaliveInterval: ReturnType<typeof setInterval> | null = null;
+
+/** Starts the SW keepalive ping. Safe to call multiple times — no-ops if already running. */
+function startKeepalive(): void {
+  if (keepaliveInterval) return;
+  keepaliveInterval = setInterval(() => {
+    chrome.storage.session.get("keepalive").catch(() => {});
+  }, 20000);
+}
+
+/** Stops the SW keepalive ping and clears the interval handle. */
+function stopKeepalive(): void {
+  if (keepaliveInterval) {
+    clearInterval(keepaliveInterval);
+    keepaliveInterval = null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Widget state — persisted here so it survives cross-origin navigations.
 // sessionStorage is origin-scoped; the service worker is tab-scoped.
@@ -91,8 +115,15 @@ chrome.runtime.onConnect.addListener((port) => {
 chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
   const m = msg as { type?: string; payload?: Record<string, unknown> };
 
-  if (m.type === "USER_MESSAGE" && typeof m.payload?.userMessage === "string") {
-    handleUserMessage(m.payload.userMessage);
+  if (m.type === "USER_MESSAGE" && typeof m.payload?.userMessage === "string" && sender?.tab?.id) {
+    // tabId is available synchronously from sender — passed directly so the
+    // guard check-and-set in handleUserMessage needs no async chrome.tabs.query.
+    handleUserMessage(m.payload.userMessage, sender.tab.id);
+
+  } else if (m.type === "CHECK_ACTIVE_SESSION") {
+    const tabId = sender?.tab?.id;
+    sendResponse({ isActive: tabId !== undefined ? (activeSessions.get(tabId) ?? false) : false });
+    return true;
 
   } else if (m.type === "ACTION_COMPLETE") {
     console.log("[PagePilot] Action complete:", m.payload);
@@ -138,23 +169,29 @@ chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
 });
 
 /**
- * Entry point for a USER_MESSAGE: resolves the active tab then hands off
- * to startNavigationLoop. Skips if a loop is already running for that tab.
+ * Entry point for a USER_MESSAGE. tabId comes directly from sender.tab.id
+ * (available synchronously in the onMessage listener) so the guard check-and-set
+ * is fully atomic — no await before we claim the slot.
+ *
+ * Ownership model: handleUserMessage is the sole writer of activeSessions for a
+ * given tab. startNavigationLoop reads the flag each iteration (for Stop support)
+ * but never sets it to true.
  */
-async function handleUserMessage(userMessage: string): Promise<void> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) {
-    console.error("[PagePilot] No active tab found");
-    return;
-  }
-  const tabId = tab.id;
-
+async function handleUserMessage(userMessage: string, tabId: number): Promise<void> {
+  // Synchronous check-and-set — no await before this point, so no TOCTOU race.
   if (activeSessions.get(tabId)) {
     console.log("[PagePilot] Navigation already in progress for tab", tabId);
     return;
   }
+  activeSessions.set(tabId, true);
 
-  await startNavigationLoop(tabId, userMessage);
+  try {
+    await startNavigationLoop(tabId, userMessage);
+  } finally {
+    // Belt-and-suspenders: startNavigationLoop's own finally also deletes, but
+    // this guarantees cleanup even if an unexpected throw escapes the inner try.
+    activeSessions.delete(tabId);
+  }
 }
 
 /** Shape of an action returned by the backend /api/navigate endpoint. */
@@ -194,7 +231,11 @@ async function fetchWithTimeout(
 async function startNavigationLoop(tabId: number, userMessage: string): Promise<void> {
   let stepCount = 0;
   const MAX_STEPS = 10;
-  activeSessions.set(tabId, true);
+
+  // Keep the MV3 service worker alive. A bare sleep() has no I/O, so Chrome
+  // can idle-terminate the SW between steps — which would wipe activeSessions
+  // and allow a second loop to start for the same tab.
+  startKeepalive();
 
   // Repeated-action tracking — detects when the model clicks the same selector
   // on the same URL multiple times, which means it failed to return "done".
@@ -333,6 +374,7 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
       console.error("[PagePilot] Could not send error completion:", sendErr);
     }
   } finally {
+    stopKeepalive();
     activeSessions.delete(tabId);
   }
 }

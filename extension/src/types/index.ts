@@ -98,7 +98,8 @@ export type PopupToBackground =
   | { type: "STOP_SESSION" }
   | { type: "STOP_NAVIGATION" }
   | { type: "USER_ANSWER"; answer: string }
-  | { type: "USER_MESSAGE"; payload: { userMessage: string } };
+  | { type: "USER_MESSAGE"; payload: { userMessage: string } }
+  | { type: "CHECK_ACTIVE_SESSION" };
 
 /** Messages the background sends back to the widget. */
 export type BackgroundToPopup =

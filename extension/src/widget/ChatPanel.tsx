@@ -249,9 +249,22 @@ export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
   // ---------------------------------------------------------------------------
 
   useEffect(() => {
-    loadPersistedState()
-      .then((s) => {
+    /**
+     * On mount, restore messages AND ask the background whether a navigation
+     * loop is currently running for this tab. If the widget was closed and
+     * reopened mid-navigation, isNavigating would otherwise reset to false
+     * (its initialState value), making the input appear falsely idle.
+     */
+    Promise.all([
+      loadPersistedState(),
+      chrome.runtime.sendMessage({ type: "CHECK_ACTIVE_SESSION" }).catch(() => ({ isActive: false })),
+    ])
+      .then(([s, sessionCheck]) => {
         dispatch({ type: "SET_MESSAGES", messages: s.messages });
+        const check = sessionCheck as { isActive?: boolean } | null;
+        if (check?.isActive) {
+          dispatch({ type: "SET_NAVIGATING", value: true });
+        }
         setIsLoaded(true);
       })
       .catch(() => setIsLoaded(true));
