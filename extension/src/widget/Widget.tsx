@@ -27,7 +27,7 @@ const getDefaultPosition = (): { x: number; y: number } => ({
 // Component
 // ---------------------------------------------------------------------------
 
-export default function Widget(): React.JSX.Element {
+export default function Widget(): React.JSX.Element | null {
   // Position is stored as absolute viewport coords (left/top).
   // Lazy initializer so window dimensions are read after the DOM is ready.
   const [pos, setPos] = useState<{ x: number; y: number }>(getDefaultPosition);

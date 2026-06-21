@@ -201,7 +201,13 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
       stepCount++;
 
       // 1. Get a fresh skeleton from the page.
-      const skeletonResp = await sendMessageToTab(tabId, { type: "GET_SKELETON" }) as { skeleton: string; url: string };
+      const skeletonResp = await sendMessageToTab(tabId, { type: "GET_SKELETON" }) as { skeleton: string; url: string } | null;
+      if (skeletonResp === null) {
+        // Tab navigated before the content script could respond — wait and retry.
+        await waitForTabLoad(tabId);
+        await sleep(500);
+        continue;
+      }
       const { skeleton, url: currentUrl } = skeletonResp;
 
       console.log(`[PagePilot] Step ${stepCount}/${MAX_STEPS}`);
@@ -262,9 +268,8 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
       });
 
       // 6. Wait for the page to settle before re-reading the DOM.
-      try {
-        await sendMessageToTab(tabId, { type: "WAIT_FOR_SETTLE" });
-      } catch {
+      const settleResp = await sendMessageToTab(tabId, { type: "WAIT_FOR_SETTLE" });
+      if (settleResp === null) {
         // Full navigation unloads the content script — wait for the tab to reload.
         await waitForTabLoad(tabId);
         await sleep(500);
@@ -423,7 +428,14 @@ function sendMessageToTab(tabId: number, message: BackgroundToContent): Promise<
     chrome.tabs.sendMessage(tabId, message, (response: unknown) => {
       clearTimeout(timeoutId);
       if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
+        const errMsg = chrome.runtime.lastError.message ?? '';
+        if (errMsg.includes('message channel closed') || errMsg.includes('Receiving end does not exist')) {
+          // Expected during page navigation — content script destroyed mid-flight.
+          console.log('[PagePilot] Tab navigated during message (expected):', errMsg);
+          resolve(null);
+        } else {
+          reject(new Error(errMsg));
+        }
         return;
       }
       resolve(response);
