@@ -37,7 +37,7 @@ type PanelAction =
   | { type: "SEND_MESSAGE"; content: string }
   | { type: "ADD_ASSISTANT"; content: string }
   | { type: "ADD_STATUS"; content: string }
-  | { type: "ADD_COMPLETION"; content: string; success: boolean }
+  | { type: "ADD_COMPLETION"; content: string; success: boolean; isChat?: boolean }
   | { type: "SET_NAVIGATING"; value: boolean }
   | { type: "ASK_USER"; question: string }
   | { type: "RESOLVE_QUESTION" }
@@ -127,12 +127,15 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
 
     case "ADD_COMPLETION":
       // Terminal message — re-enables the input.
+      // Chat responses omit success so ChatMessage renders them as plain bubbles.
       return {
         ...state,
         isNavigating: false,
         messages: [
           ...state.messages,
-          makeMessage("assistant", action.content, { success: action.success }),
+          action.isChat
+            ? makeMessage("assistant", action.content)
+            : makeMessage("assistant", action.content, { success: action.success }),
         ],
       };
 
@@ -280,8 +283,8 @@ export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
      * Display the final message with success/error styling and re-enable the input.
      */
     function onComplete(e: Event) {
-      const { success, message } = (e as CustomEvent<{ success: boolean; message: string }>).detail;
-      dispatch({ type: "ADD_COMPLETION", content: message, success });
+      const { success, message, isChat } = (e as CustomEvent<{ success: boolean; message: string; isChat?: boolean }>).detail;
+      dispatch({ type: "ADD_COMPLETION", content: message, success, isChat });
     }
 
     host.addEventListener("pagepilot-status", onStatus);

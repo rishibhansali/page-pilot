@@ -12,7 +12,10 @@ class NavigateRequest(BaseModel):
 
 
 class NavigateResponse(BaseModel):
-    """Action returned to the extension after Claude decides the next step."""
+    """Action returned to the extension after Claude decides the next step.
+
+    action is one of: "click", "scroll", "done", "respond", "chat"
+    """
     action: str
     selector: str | None = None
     explanation: str

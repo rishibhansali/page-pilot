@@ -245,21 +245,26 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
       const action = await res.json() as NavigationAction;
       console.log("[PagePilot] Action:", action);
 
-      // 3. Send a live step update to the widget.
-      await sendMessageToTab(tabId, {
-        type: "STATUS_UPDATE",
-        payload: { step: stepCount, explanation: action.explanation, action: action.action },
-      });
-
-      // 4. Terminal actions — end the loop.
-      if (action.action === "done" || action.action === "respond") {
+      // 3. Terminal actions — end the loop immediately (before status update so
+      //    chat responses never show a "Step N/10" progress bubble).
+      if (action.action === "done" || action.action === "respond" || action.action === "chat") {
         await sendMessageToTab(tabId, {
           type: "NAVIGATION_COMPLETE",
-          payload: { success: action.action === "done", message: action.message ?? action.explanation },
+          payload: {
+            success: action.action === "done",
+            message: action.message ?? action.explanation,
+            isChat: action.action === "chat",
+          },
         });
         activeSessions.delete(tabId);
         return;
       }
+
+      // 4. Send a live step update to the widget (only for actionable steps).
+      await sendMessageToTab(tabId, {
+        type: "STATUS_UPDATE",
+        payload: { step: stepCount, explanation: action.explanation, action: action.action },
+      });
 
       // 5. Execute the action in the page.
       await sendMessageToTab(tabId, {

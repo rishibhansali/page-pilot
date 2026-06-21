@@ -115,7 +115,7 @@ export type BackgroundToContent =
   | { type: "EXECUTE_ACTION"; action: PilotAction }
   | { type: "WAIT_FOR_SETTLE" }
   | { type: "STATUS_UPDATE"; payload: { step: number; explanation: string; action: string } }
-  | { type: "NAVIGATION_COMPLETE"; payload: { success: boolean; message: string } }
+  | { type: "NAVIGATION_COMPLETE"; payload: { success: boolean; message: string; isChat?: boolean } }
   | { type: "STOP_NAVIGATION" };
 
 /** Messages the content script sends back to the background. */
@@ -180,6 +180,8 @@ export interface ChatMessage {
   isStatus?: boolean;
   /** Set on NAVIGATION_COMPLETE messages — true for success, false for failure. */
   success?: boolean;
+  /** True when the backend responded with a conversational "chat" action — renders as a plain assistant bubble. */
+  isChat?: boolean;
 }
 
 /** Full state of one navigation session as tracked by the ChatPanel. */
