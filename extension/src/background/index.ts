@@ -287,10 +287,23 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
       lastUrl = currentUrl;
 
       // 6. Execute the action in the page.
-      await sendMessageToTab(tabId, {
-        type: "EXECUTE_ACTION",
-        action: action as unknown as PilotAction,
-      });
+      // A timeout here almost always means the click fired and triggered a navigation
+      // before the content script could send back its response. Treat it as an
+      // optimistic success and let WAIT_FOR_SETTLE detect the new page state rather
+      // than crashing the loop with an uncaught throw.
+      try {
+        await sendMessageToTab(tabId, {
+          type: "EXECUTE_ACTION",
+          action: action as unknown as PilotAction,
+        });
+      } catch (e) {
+        const errMsg = e instanceof Error ? e.message : String(e);
+        if (errMsg.includes('timed out')) {
+          console.log('[PagePilot] EXECUTE_ACTION timed out — action likely fired and triggered navigation. Continuing loop.');
+        } else {
+          throw e;
+        }
+      }
 
       // 7. Wait for the page to settle before re-reading the DOM.
       const settleResp = await sendMessageToTab(tabId, { type: "WAIT_FOR_SETTLE" });
