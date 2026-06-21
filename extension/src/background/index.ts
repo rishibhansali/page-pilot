@@ -12,6 +12,7 @@ import type {
   NavigateRequest,
   NavigateResponse,
   SessionStatus,
+  ChatMessage,
 } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -48,6 +49,23 @@ let popupPort: chrome.runtime.Port | null = null;
 const activeSessions = new Map<number, boolean>();
 
 // ---------------------------------------------------------------------------
+// Widget state — persisted here so it survives cross-origin navigations.
+// sessionStorage is origin-scoped; the service worker is tab-scoped.
+// ---------------------------------------------------------------------------
+
+/** Chat message history per tab, keyed by tab ID. */
+const tabChatHistory = new Map<number, ChatMessage[]>();
+
+/** Widget open/closed state per tab, keyed by tab ID. */
+const widgetOpenState = new Map<number, boolean>();
+
+// Free memory when the user closes a tab.
+chrome.tabs.onRemoved.addListener((tabId) => {
+  tabChatHistory.delete(tabId);
+  widgetOpenState.delete(tabId);
+});
+
+// ---------------------------------------------------------------------------
 // Popup port connection — popup connects on open, disconnects on close.
 // ---------------------------------------------------------------------------
 
@@ -70,20 +88,52 @@ chrome.runtime.onConnect.addListener((port) => {
 // The port-based START_SESSION flow above is preserved for the full loop (Part 7+).
 // ---------------------------------------------------------------------------
 
-chrome.runtime.onMessage.addListener((msg: unknown, sender) => {
+chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
   const m = msg as { type?: string; payload?: Record<string, unknown> };
+
   if (m.type === "USER_MESSAGE" && typeof m.payload?.userMessage === "string") {
     handleUserMessage(m.payload.userMessage);
+
   } else if (m.type === "ACTION_COMPLETE") {
     console.log("[PagePilot] Action complete:", m.payload);
+
   } else if (m.type === "PAGE_SETTLING") {
     console.log("[PagePilot] Page settling, tab:", sender?.tab?.id);
+
   } else if (m.type === "STOP_NAVIGATION") {
     const tabId = sender?.tab?.id;
     if (tabId !== undefined) {
       console.log("[PagePilot] Stopping navigation for tab", tabId);
       activeSessions.set(tabId, false);
     }
+
+  } else if (m.type === "GET_CHAT_HISTORY") {
+    const tabId = sender?.tab?.id;
+    sendResponse({ messages: tabId !== undefined ? (tabChatHistory.get(tabId) ?? []) : [] });
+    return true;
+
+  } else if (m.type === "SAVE_CHAT_HISTORY") {
+    const tabId = sender?.tab?.id;
+    const messages = m.payload?.messages;
+    if (tabId !== undefined && Array.isArray(messages)) {
+      tabChatHistory.set(tabId, messages as ChatMessage[]);
+    }
+    sendResponse({ ok: true });
+    return true;
+
+  } else if (m.type === "GET_WIDGET_OPEN_STATE") {
+    const tabId = sender?.tab?.id;
+    sendResponse({ isOpen: tabId !== undefined ? (widgetOpenState.get(tabId) ?? false) : false });
+    return true;
+
+  } else if (m.type === "SAVE_WIDGET_OPEN_STATE") {
+    const tabId = sender?.tab?.id;
+    const isOpen = m.payload?.isOpen;
+    if (tabId !== undefined && typeof isOpen === "boolean") {
+      widgetOpenState.set(tabId, isOpen);
+    }
+    sendResponse({ ok: true });
+    return true;
   }
 });
 

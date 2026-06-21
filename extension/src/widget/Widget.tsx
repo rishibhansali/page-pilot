@@ -6,10 +6,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { WidgetPosition } from "@/types";
 import ChatPanel from "./ChatPanel";
-import {
-  loadPersistedState,
-  savePersistedState,
-} from "./widgetStore";
+import { loadPersistedState } from "./widgetStore";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -34,8 +31,9 @@ export default function Widget(): React.JSX.Element {
   // Position is stored as absolute viewport coords (left/top).
   // Lazy initializer so window dimensions are read after the DOM is ready.
   const [pos, setPos] = useState<{ x: number; y: number }>(getDefaultPosition);
-  // Initialise directly from sessionStorage — synchronous, no async needed.
-  const [isOpen, setIsOpen] = useState(() => loadPersistedState().isOpen);
+  const [isOpen, setIsOpen] = useState(false);
+  // Holds off rendering until the async state load from the service worker completes.
+  const [isReady, setIsReady] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
   // Ref stores the drag origin so mousemove math is correct without stale closures.
@@ -53,12 +51,25 @@ export default function Widget(): React.JSX.Element {
   const side: WidgetPosition["side"] =
     pos.x + BUTTON_SIZE / 2 < window.innerWidth / 2 ? "left" : "right";
 
-  // Persist only isOpen to sessionStorage; preserve whatever messages ChatPanel
-  // has already written rather than overwriting them with a potentially stale read.
+  // Load isOpen from the service worker once on mount.
   useEffect(() => {
-    const current = loadPersistedState();
-    savePersistedState({ isOpen, messages: current.messages });
-  }, [isOpen]);
+    loadPersistedState()
+      .then((s) => {
+        setIsOpen(s.isOpen);
+        setIsReady(true);
+      })
+      .catch(() => setIsReady(true));
+  }, []);
+
+  // Persist isOpen to the service worker whenever it changes.
+  // Skipped until the initial load completes to avoid an immediate write of false.
+  useEffect(() => {
+    if (!isReady) return;
+    chrome.runtime.sendMessage({
+      type: "SAVE_WIDGET_OPEN_STATE",
+      payload: { isOpen },
+    }).catch(() => { /* service worker may be restarting */ });
+  }, [isOpen, isReady]);
 
   // Reset to the default right-center position whenever the viewport changes
   // (DevTools open/close, window resize) so the button is always reachable.
@@ -139,6 +150,10 @@ export default function Widget(): React.JSX.Element {
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
+
+  // Don't render until the async state load resolves so the button doesn't
+  // flash at the default closed state before restoring the persisted open state.
+  if (!isReady) return null;
 
   return (
     <>

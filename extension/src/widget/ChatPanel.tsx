@@ -3,7 +3,7 @@
 // Manages the Chrome runtime port connection to the background service worker
 // and converts background messages into ChatMessage objects for display.
 
-import React, { useCallback, useEffect, useRef, useReducer } from "react";
+import React, { useCallback, useEffect, useRef, useReducer, useState } from "react";
 import type {
   BackgroundToPopup,
   ChatMessage,
@@ -12,7 +12,7 @@ import type {
 } from "@/types";
 import ChatMessageBubble from "./ChatMessage";
 import LoadingState from "./LoadingState";
-import { loadPersistedState, savePersistedState } from "./widgetStore";
+import { loadPersistedState } from "./widgetStore";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -169,12 +169,10 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
 // ---------------------------------------------------------------------------
 
 export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
-  // Lazy init: restore persisted messages from sessionStorage synchronously so
-  // chat history is present on the first render after a page navigation.
-  const [state, dispatch] = useReducer(panelReducer, undefined, () => ({
-    ...initialState,
-    messages: loadPersistedState().messages,
-  }));
+  const [state, dispatch] = useReducer(panelReducer, initialState);
+  // Prevents the message persist effect from firing before the initial async load
+  // has returned — otherwise it would write an empty messages array on first render.
+  const [isLoaded, setIsLoaded] = useState(false);
   const portRef = useRef<chrome.runtime.Port | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -231,13 +229,29 @@ export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
   }, []);
 
   // ---------------------------------------------------------------------------
-  // Persist messages to sessionStorage on every change
+  // Restore messages from the service worker on mount
   // ---------------------------------------------------------------------------
 
   useEffect(() => {
-    // isOpen is always true here — ChatPanel only renders when the widget is open.
-    savePersistedState({ isOpen: true, messages: state.messages });
-  }, [state.messages]);
+    loadPersistedState()
+      .then((s) => {
+        dispatch({ type: "SET_MESSAGES", messages: s.messages });
+        setIsLoaded(true);
+      })
+      .catch(() => setIsLoaded(true));
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Persist messages to the service worker on every change
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    if (!isLoaded) return;
+    chrome.runtime.sendMessage({
+      type: "SAVE_CHAT_HISTORY",
+      payload: { messages: state.messages },
+    }).catch(() => { /* service worker may be restarting */ });
+  }, [state.messages, isLoaded]);
 
   // ---------------------------------------------------------------------------
   // Navigation event listeners (dispatched by the content script)

@@ -1,36 +1,29 @@
-// Persistent store for widget state, backed by sessionStorage.
-// sessionStorage is accessible from content scripts (unlike chrome.storage.session),
-// is tab-scoped, survives same-tab page navigations, and is cleared on tab close.
+// Persistent store for widget state, backed by the background service worker.
+// Using the service worker (keyed by tab ID) instead of sessionStorage so chat
+// history survives cross-origin navigations within the same tab — sessionStorage
+// is origin-scoped and gets cleared whenever the hostname changes.
 
 import type { ChatMessage } from "@/types";
 
-/** Shape of the data written to sessionStorage. */
+/** Shape of the data stored per tab in the background service worker. */
 export interface PersistedState {
   isOpen: boolean;
   messages: ChatMessage[];
 }
 
 /**
- * Returns the sessionStorage key for the current hostname.
- * github.com/pricing and github.com/settings share history; different
- * domains each get their own isolated state.
+ * Reads widget state from the background service worker.
+ * Falls back to defaults if the service worker is unavailable.
  */
-const getStorageKey = (): string => `pagepilot_${location.hostname}`;
-
-/**
- * Reads widget state from sessionStorage synchronously.
- * Falls back to defaults if no state is stored or the data is malformed.
- */
-export function loadPersistedState(): PersistedState {
+export async function loadPersistedState(): Promise<PersistedState> {
   try {
-    const raw = sessionStorage.getItem(getStorageKey());
-    if (!raw) return { isOpen: false, messages: [] };
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const [historyRes, openRes] = await Promise.all([
+      chrome.runtime.sendMessage({ type: "GET_CHAT_HISTORY" }),
+      chrome.runtime.sendMessage({ type: "GET_WIDGET_OPEN_STATE" }),
+    ]);
     return {
-      isOpen: parsed.isOpen === true,
-      messages: Array.isArray(parsed.messages)
-        ? (parsed.messages as ChatMessage[])
-        : [],
+      isOpen: (openRes as { isOpen?: boolean })?.isOpen ?? false,
+      messages: (historyRes as { messages?: ChatMessage[] })?.messages ?? [],
     };
   } catch (err) {
     console.error("[PagePilot Store] Load error:", err);
@@ -39,14 +32,22 @@ export function loadPersistedState(): PersistedState {
 }
 
 /**
- * Writes widget state to sessionStorage synchronously.
+ * Writes widget state to the background service worker.
  * Called whenever isOpen or messages change so navigations land in the correct state.
  */
-export function savePersistedState(state: PersistedState): void {
+export async function savePersistedState(state: PersistedState): Promise<void> {
   try {
-    sessionStorage.setItem(getStorageKey(), JSON.stringify(state));
+    await Promise.all([
+      chrome.runtime.sendMessage({
+        type: "SAVE_CHAT_HISTORY",
+        payload: { messages: state.messages },
+      }),
+      chrome.runtime.sendMessage({
+        type: "SAVE_WIDGET_OPEN_STATE",
+        payload: { isOpen: state.isOpen },
+      }),
+    ]);
   } catch (err) {
     console.error("[PagePilot Store] Save error:", err);
   }
 }
-
