@@ -229,14 +229,11 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
       } catch (fetchErr) {
         const isTimeout =
           fetchErr instanceof DOMException && fetchErr.name === "AbortError";
-        await sendMessageToTab(tabId, {
-          type: "NAVIGATION_COMPLETE",
-          payload: {
-            success: false,
-            message: isTimeout
-              ? "Navigation timed out — Ollama may be slow or the backend may be down. Please try again."
-              : `Network error: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
-          },
+        await sendNavigationComplete(tabId, {
+          success: false,
+          message: isTimeout
+            ? "Navigation timed out — Ollama may be slow or the backend may be down. Please try again."
+            : `Network error: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
         }).catch(() => { /* content script may be gone */ });
         activeSessions.delete(tabId);
         return;
@@ -248,13 +245,10 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
       // 3. Terminal actions — end the loop immediately (before status update so
       //    chat responses never show a "Step N/10" progress bubble).
       if (action.action === "done" || action.action === "respond" || action.action === "chat") {
-        await sendMessageToTab(tabId, {
-          type: "NAVIGATION_COMPLETE",
-          payload: {
-            success: action.action === "done",
-            message: action.message ?? action.explanation,
-            isChat: action.action === "chat",
-          },
+        await sendNavigationComplete(tabId, {
+          success: action.action === "done",
+          message: action.message ?? action.explanation,
+          isChat: action.action === "chat",
         });
         activeSessions.delete(tabId);
         return;
@@ -284,20 +278,16 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
     }
 
     // Hit the step limit.
-    await sendMessageToTab(tabId, {
-      type: "NAVIGATION_COMPLETE",
-      payload: {
-        success: false,
-        message: "I reached the step limit without completing the goal. Please try navigating manually.",
-      },
+    await sendNavigationComplete(tabId, {
+      success: false,
+      message: "I reached the step limit without completing the goal. Please try navigating manually.",
     }).catch(() => { /* content script may be gone */ });
 
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[PagePilot] Navigation loop error:", err);
-    sendMessageToTab(tabId, {
-      type: "NAVIGATION_COMPLETE",
-      payload: { success: false, message: `Navigation failed: ${message}` },
+    sendNavigationComplete(tabId, {
+      success: false, message: `Navigation failed: ${message}`,
     }).catch(() => { /* ignore */ });
   } finally {
     activeSessions.delete(tabId);
@@ -453,6 +443,41 @@ function sendMessageToTab(tabId: number, message: BackgroundToContent): Promise<
  */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Delivers NAVIGATION_COMPLETE to the content script with retry logic.
+ *
+ * The race: after a page navigation the content script runs immediately but
+ * the React widget tree may not have mounted yet, so page-pilot-root doesn't
+ * exist and the event gets silently dropped. The content script now reports
+ * delivered:false in that case so we can wait and retry here.
+ *
+ * A null result from sendMessageToTab means the content script itself is gone
+ * (tab closed / navigation destroyed it) — we don't retry in that case.
+ */
+async function sendNavigationComplete(
+  tabId: number,
+  payload: { success: boolean; message: string; isChat?: boolean },
+  attempt = 1
+): Promise<void> {
+  const MAX_ATTEMPTS = 5;
+  const RETRY_DELAY_MS = 400;
+
+  const result = await sendMessageToTab(tabId, { type: "NAVIGATION_COMPLETE", payload });
+
+  if (result === null) return;
+
+  const delivered = (result as Record<string, unknown>).delivered;
+  if (delivered === false && attempt < MAX_ATTEMPTS) {
+    console.log(`[PagePilot] Widget not ready, retrying NAVIGATION_COMPLETE (attempt ${attempt + 1}/${MAX_ATTEMPTS})`);
+    await sleep(RETRY_DELAY_MS);
+    return sendNavigationComplete(tabId, payload, attempt + 1);
+  }
+
+  if (delivered === false) {
+    console.error('[PagePilot] Failed to deliver NAVIGATION_COMPLETE after max retries');
+  }
 }
 
 /**

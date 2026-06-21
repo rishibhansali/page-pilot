@@ -97,8 +97,11 @@ chrome.runtime.onMessage.addListener(
             composed: true,
           })
         );
+        sendResponse({ ok: true, delivered: true });
+      } else {
+        // Widget shadow DOM not mounted yet — tell background to retry.
+        sendResponse({ ok: true, delivered: false });
       }
-      sendResponse({ ok: true });
     }
   }
 );
