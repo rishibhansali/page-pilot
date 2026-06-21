@@ -274,7 +274,7 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
         await sleep(500);
       }
 
-      await sleep(300);
+      await sleep(600);
     }
 
     // Hit the step limit.
@@ -284,11 +284,15 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
     }).catch(() => { /* content script may be gone */ });
 
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
     console.error("[PagePilot] Navigation loop error:", err);
-    sendNavigationComplete(tabId, {
-      success: false, message: `Navigation failed: ${message}`,
-    }).catch(() => { /* ignore */ });
+    try {
+      await sendNavigationComplete(tabId, {
+        success: false,
+        message: "Navigation interrupted — the page changed unexpectedly. Please try again.",
+      });
+    } catch (sendErr) {
+      console.error("[PagePilot] Could not send error completion:", sendErr);
+    }
   } finally {
     activeSessions.delete(tabId);
   }
@@ -424,8 +428,13 @@ function sendMessageToTab(tabId: number, message: BackgroundToContent): Promise<
       clearTimeout(timeoutId);
       if (chrome.runtime.lastError) {
         const errMsg = chrome.runtime.lastError.message ?? '';
-        if (errMsg.includes('message channel closed') || errMsg.includes('Receiving end does not exist')) {
-          // Expected during page navigation — content script destroyed mid-flight.
+        if (
+          errMsg.includes('message channel closed') ||
+          errMsg.includes('Receiving end does not exist') ||
+          errMsg.includes('back/forward cache') ||
+          errMsg.includes('bfcache')
+        ) {
+          // Expected during page navigation — content script destroyed or suspended mid-flight.
           console.log('[PagePilot] Tab navigated during message (expected):', errMsg);
           resolve(null);
         } else {
