@@ -50,10 +50,3 @@ export function savePersistedState(state: PersistedState): void {
   }
 }
 
-/**
- * Convenience getter — reads the current messages from sessionStorage.
- * Used by Widget.tsx when snapshotting the full state on isOpen changes.
- */
-export function getPersistedMessages(): ChatMessage[] {
-  return loadPersistedState().messages;
-}

@@ -7,7 +7,6 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { WidgetPosition } from "@/types";
 import ChatPanel from "./ChatPanel";
 import {
-  getPersistedMessages,
   loadPersistedState,
   savePersistedState,
 } from "./widgetStore";
@@ -54,11 +53,11 @@ export default function Widget(): React.JSX.Element {
   const side: WidgetPosition["side"] =
     pos.x + BUTTON_SIZE / 2 < window.innerWidth / 2 ? "left" : "right";
 
-  // Persist isOpen to sessionStorage whenever it changes so the next page load
-  // restores the correct open/closed state. Also snapshots the current messages
-  // so the full state object is always coherent in storage.
+  // Persist only isOpen to sessionStorage; preserve whatever messages ChatPanel
+  // has already written rather than overwriting them with a potentially stale read.
   useEffect(() => {
-    savePersistedState({ isOpen, messages: getPersistedMessages() });
+    const current = loadPersistedState();
+    savePersistedState({ isOpen, messages: current.messages });
   }, [isOpen]);
 
   // Reset to the default right-center position whenever the viewport changes
