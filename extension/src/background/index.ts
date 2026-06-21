@@ -196,6 +196,12 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
   const MAX_STEPS = 10;
   activeSessions.set(tabId, true);
 
+  // Repeated-action tracking — detects when the model clicks the same selector
+  // on the same URL multiple times, which means it failed to return "done".
+  let lastSelector: string | null = null;
+  let lastUrl: string | null = null;
+  let repeatCount = 0;
+
   try {
     while (stepCount < MAX_STEPS && activeSessions.get(tabId)) {
       stepCount++;
@@ -260,13 +266,33 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
         payload: { step: stepCount, explanation: action.explanation, action: action.action },
       });
 
-      // 5. Execute the action in the page.
+      // 5. Repeated-action guard — if the model issues the same click on the
+      //    same URL twice in a row, it has almost certainly already reached the
+      //    goal but failed to return "done". Stop gracefully rather than looping.
+      if (action.action === "click" && action.selector === lastSelector && currentUrl === lastUrl) {
+        repeatCount++;
+        console.log(`[PagePilot] Repeated action detected (${repeatCount}x): ${action.selector} on ${currentUrl}`);
+        if (repeatCount >= 2) {
+          await sendNavigationComplete(tabId, {
+            success: true,
+            message: `Looks like I've reached the destination — ${action.explanation}`,
+          });
+          activeSessions.delete(tabId);
+          return;
+        }
+      } else {
+        repeatCount = 0;
+      }
+      lastSelector = action.selector;
+      lastUrl = currentUrl;
+
+      // 6. Execute the action in the page.
       await sendMessageToTab(tabId, {
         type: "EXECUTE_ACTION",
         action: action as unknown as PilotAction,
       });
 
-      // 6. Wait for the page to settle before re-reading the DOM.
+      // 7. Wait for the page to settle before re-reading the DOM.
       const settleResp = await sendMessageToTab(tabId, { type: "WAIT_FOR_SETTLE" });
       if (settleResp === null) {
         // Full navigation unloads the content script — wait for the tab to reload.
