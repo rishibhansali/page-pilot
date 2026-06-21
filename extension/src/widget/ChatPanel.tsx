@@ -27,7 +27,10 @@ interface Props {
 
 interface PanelState {
   messages: ChatMessage[];
+  /** True once a STATUS_UPDATE arrives — navigation is actually executing steps. */
   isNavigating: boolean;
+  /** True immediately after sending any message — covers the brief wait before we know if it's chat or nav. */
+  isWaitingForResponse: boolean;
   inputValue: string;
   pendingQuestion: string | null;
 }
@@ -79,6 +82,7 @@ function getSiteDomain(): string {
 const initialState: PanelState = {
   messages: [],
   isNavigating: false,
+  isWaitingForResponse: false,
   inputValue: "",
   pendingQuestion: null,
 };
@@ -94,10 +98,13 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
       return { ...state, inputValue: action.value };
 
     case "SEND_MESSAGE":
+      // Set isWaitingForResponse immediately — isNavigating stays false until
+      // a STATUS_UPDATE confirms real navigation steps are happening.
       return {
         ...state,
         inputValue: "",
-        isNavigating: true,
+        isNavigating: false,
+        isWaitingForResponse: true,
         pendingQuestion: null,
         messages: [
           ...state.messages,
@@ -109,6 +116,7 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
       return {
         ...state,
         isNavigating: false,
+        isWaitingForResponse: false,
         messages: [
           ...state.messages,
           makeMessage("assistant", action.content),
@@ -116,9 +124,12 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
       };
 
     case "ADD_STATUS":
-      // Status messages show live progress — keep isNavigating true.
+      // First STATUS_UPDATE confirms navigation is executing — graduate from
+      // isWaitingForResponse to isNavigating so the full ThinkingIndicator appears.
       return {
         ...state,
+        isNavigating: true,
+        isWaitingForResponse: false,
         messages: [
           ...state.messages,
           makeMessage("assistant", action.content, { isStatus: true }),
@@ -126,11 +137,12 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
       };
 
     case "ADD_COMPLETION":
-      // Terminal message — re-enables the input.
+      // Terminal message — re-enables the input and clears both loading flags.
       // Chat responses omit success so ChatMessage renders them as plain bubbles.
       return {
         ...state,
         isNavigating: false,
+        isWaitingForResponse: false,
         messages: [
           ...state.messages,
           action.isChat
@@ -140,12 +152,13 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
       };
 
     case "SET_NAVIGATING":
-      return { ...state, isNavigating: action.value };
+      return { ...state, isNavigating: action.value, isWaitingForResponse: false };
 
     case "ASK_USER":
       return {
         ...state,
         isNavigating: false,
+        isWaitingForResponse: false,
         pendingQuestion: action.question,
         messages: [
           ...state.messages,
@@ -311,7 +324,7 @@ export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [state.messages, state.isNavigating]);
+  }, [state.messages, state.isNavigating, state.isWaitingForResponse]);
 
   // ---------------------------------------------------------------------------
   // Handlers
@@ -413,6 +426,8 @@ export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
               Stop
             </button>
           )}
+          {/* No Stop button during isWaitingForResponse — the response comes back too
+              quickly to meaningfully cancel, and it may just be a chat reply. */}
           <button
             onClick={onClose}
             aria-label="Close Page Pilot"
@@ -445,8 +460,30 @@ export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
           <ChatMessageBubble key={msg.id} message={msg} />
         ))}
 
-        {/* Loading indicator — shown after the last message while navigating */}
+        {/* Full thinking indicator — rotating copy, only shown during real navigation steps */}
         {state.isNavigating && <LoadingState />}
+
+        {/* Simple typing indicator — three bouncing dots shown while waiting for any
+            response before we know whether it's chat or navigation */}
+        {state.isWaitingForResponse && !state.isNavigating && (
+          <div className="flex items-start">
+            <div className="rounded-2xl rounded-tl-sm px-4 py-3 bg-navy-light border border-slate-700/50 flex gap-1.5 items-center">
+              {[0, 1, 2].map((i) => (
+                <span
+                  key={i}
+                  className="w-1.5 h-1.5 rounded-full bg-slate-400"
+                  style={{ animation: `pp-bounce 1.2s ease-in-out ${i * 0.2}s infinite` }}
+                />
+              ))}
+            </div>
+            <style>{`
+              @keyframes pp-bounce {
+                0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
+                40% { transform: translateY(-4px); opacity: 1; }
+              }
+            `}</style>
+          </div>
+        )}
 
         <div ref={messagesEndRef} />
       </div>
@@ -464,10 +501,12 @@ export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
             value={state.inputValue}
             onChange={(e) => dispatch({ type: "SET_INPUT", value: e.target.value })}
             onKeyDown={handleKeyDown}
-            disabled={state.isNavigating && state.pendingQuestion === null}
+            disabled={(state.isNavigating || state.isWaitingForResponse) && state.pendingQuestion === null}
             placeholder={
               state.isNavigating
                 ? "Navigating…"
+                : state.isWaitingForResponse
+                ? "Waiting…"
                 : state.pendingQuestion
                 ? "Type your answer…"
                 : "What do you want me to do?"
@@ -479,7 +518,7 @@ export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
               "focus:outline-none focus:ring-2 focus:ring-pilot-blue",
               "disabled:opacity-40 disabled:cursor-not-allowed",
               "transition-colors",
-              state.isNavigating && state.pendingQuestion === null
+              (state.isNavigating || state.isWaitingForResponse) && state.pendingQuestion === null
                 ? "border-slate-800"
                 : "border-slate-700",
             ].join(" ")}
@@ -489,7 +528,7 @@ export default function ChatPanel({ side, onClose }: Props): React.JSX.Element {
             onClick={handleSend}
             disabled={
               !state.inputValue.trim() ||
-              (state.isNavigating && state.pendingQuestion === null)
+              ((state.isNavigating || state.isWaitingForResponse) && state.pendingQuestion === null)
             }
             aria-label="Send"
             className="flex-shrink-0 w-10 h-10 rounded-xl bg-pilot-blue flex items-center justify-center
