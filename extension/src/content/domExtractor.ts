@@ -203,19 +203,26 @@ function generateSelector(el: Element, ppId: string): string {
     if (val) return `[${attr}='${val}']`;
   }
 
-  // 3. Pathname for same-origin anchor links
+  // 3. Pathname for same-origin anchor links — only when the pathname is unique
+  //    across all anchors on the page. Blogspot nav tabs often all share href="/"
+  //    (onclick-driven); returning "/" for all of them makes them indistinguishable
+  //    to the model and causes it to invent selectors or click the wrong element.
   if (el instanceof HTMLAnchorElement) {
     const hrefAttr = el.getAttribute("href");
     if (hrefAttr) {
       try {
         const url = new URL(el.href, window.location.href);
         if (url.origin === window.location.origin && url.pathname) {
-          return url.pathname;
+          const pathname = url.pathname;
+          // Only use the pathname as a selector when it uniquely identifies this link.
+          if (document.querySelectorAll(`a[href='${pathname}']`).length === 1) {
+            return pathname;
+          }
+          // Pathname not unique — fall through to CSS path or pp-id below.
         }
       } catch {
-        // href may be javascript:void(0) or other non-URL value
+        // href may be javascript:void(0) or other non-URL value — fall through
       }
-      if (hrefAttr.startsWith("/")) return hrefAttr;
     }
   }
 

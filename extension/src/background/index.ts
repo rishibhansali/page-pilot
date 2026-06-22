@@ -270,6 +270,13 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
       const { skeleton, url: currentUrl } = skeletonResp;
       if (stepCount === 1) startUrl = currentUrl;
 
+      // Annotate the previous step's history entry with the URL we actually landed
+      // on. Without this, the model sees "clicked /coding" but doesn't know it
+      // resolved to /2023/12/coding.html — and keeps clicking the same link.
+      if (stepHistory.length > 0 && !stepHistory[stepHistory.length - 1].includes('→')) {
+        stepHistory[stepHistory.length - 1] += ` → arrived at ${currentUrl}`;
+      }
+
       console.log(`[PagePilot] Step ${stepCount}/${MAX_STEPS}`);
 
       // 2b. Ask the backend for the next action.
