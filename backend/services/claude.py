@@ -4,6 +4,7 @@
 # The function signature and return format stay identical.
 import json
 import re
+from urllib.parse import urlparse
 import ollama
 import config
 
@@ -98,22 +99,25 @@ CRITICAL RULES — FOLLOW EXACTLY:
    helpful message telling the user where to look manually.
 
 6. GOAL-COMPLETION CHECK — run this after every action:
-   After each step, compare the current URL and the goal.
-   If the current page already satisfies what the user asked for
-   (e.g. they asked "go to pricing" and the current URL now contains
-   "/pricing", or they asked "open settings" and you can see a
-   settings heading on the page), you MUST return "done" immediately.
+   After each step, compare the CURRENT URL PATH and the goal.
+   If the URL path literally contains the destination keyword the
+   user asked for, you MUST return "done" immediately.
    Do not continue clicking once the goal is reached.
-   Example: goal is "go to pricing", current URL is "example.com/pricing"
+   Example: goal is "go to pricing", URL path is "/pricing"
    → return {"action":"done","selector":null,"explanation":"Arrived at pricing page","message":"You're on the pricing page!"}
 
    Example of correctly stopping:
    Goal: "go to the coding page"
-   Current URL: "https://example.com/2023/12/coding.html"
+   URL path: "/2023/12/coding.html"
    Correct response: {"action":"done","selector":null,"explanation":"Already on the coding page","message":"You're on the coding page now."}
 
    Even though the page may still show a "Coding" link in its navigation menu \
 (since that's how websites work), you are ALREADY on that page. Do not click it again.
+
+   Rule: Only return "done" if the CURRENT URL PATH literally
+   contains the destination keyword. Do NOT return "done" just
+   because the goal sounds similar to the current page's content
+   or title. The URL path is the only reliable signal.
 ---RULES END---
 
 CRITICAL: Your entire response must be a single JSON object.
@@ -183,25 +187,36 @@ def get_navigation_action(
     lines = dom_skeleton.strip().split("\n")
     trimmed_skeleton = "\n".join(lines[:_MAX_SKELETON_LINES])
 
-    # The completion-check block appears BEFORE the skeleton so the model's
-    # attention processes the URL comparison before it ever sees clickable
-    # elements that might tempt it into an unnecessary click.
+    # Extract just the URL path so the model compares a concrete string
+    # rather than doing a vague "does this page feel like the destination?" check.
+    url_path = urlparse(current_url).path
+
+    # STEP 0 (completion check) appears BEFORE the skeleton. The model must
+    # decide YES/NO based solely on whether the path literally contains the
+    # destination keyword — not on page content, titles, or fuzzy similarity.
     user_content = (
         f"Goal: {user_message}\n"
         f"Current URL: {current_url}\n\n"
-        "Before choosing any action, answer this first:\n\n"
-        "Does the CURRENT URL already represent where the user wants to be?\n\n"
-        f"Current URL: {current_url}\n"
+        "---\n"
+        "STEP 0 — ARRIVAL CHECK (do this before anything else):\n\n"
+        f"Current URL path: {url_path}\n"
         f'User\'s goal: "{user_message}"\n\n'
-        "If the current URL already matches or clearly satisfies the goal, "
-        "you MUST respond with:\n"
-        '{"action":"done","selector":null,"explanation":"Already on the correct page",'
-        '"message":"<friendly confirmation message>"}\n\n'
-        "Do this BEFORE looking at the page elements below. "
-        "Do not click anything if you are already on the destination, "
-        "even if a link with a similar label is visible on the page.\n\n"
-        "Only if the current URL does NOT yet satisfy the goal, proceed to choose "
-        "the best click/scroll action from the elements listed below.\n\n"
+        "Look at the CURRENT URL PATH ONLY. Does the path directly and "
+        "literally contain the specific destination the user asked for?\n\n"
+        "Examples of YES (already arrived, return done):\n"
+        '- Goal: "go to pricing page" + URL path: "/pricing" → YES\n'
+        '- Goal: "take me to coding" + URL path: "/2023/12/coding.html" → YES\n'
+        '- Goal: "open settings" + URL path: "/settings/account" → YES\n\n'
+        "Examples of NO (not there yet, proceed to navigate):\n"
+        '- Goal: "go to pricing" + URL path: "/" → NO, homepage\n'
+        '- Goal: "take me to coding" + URL path: "/blog" → NO, different page\n'
+        '- Goal: "go to settings" + URL path: "/dashboard" → NO, wrong page\n\n'
+        "If YES: respond immediately with:\n"
+        '{"action":"done","selector":null,"explanation":"Already at destination",'
+        '"message":"You\'re already on the [destination] page!"}\n\n'
+        "If NO: ignore this check entirely and proceed to choose the best "
+        "action from the page elements below.\n"
+        "---\n\n"
         f"Current page elements:\n{trimmed_skeleton}\n\n"
         "---\n"
         "REMINDER: Your selector MUST be copied exactly from the skeleton above. "
