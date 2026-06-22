@@ -106,6 +106,14 @@ CRITICAL RULES — FOLLOW EXACTLY:
    Do not continue clicking once the goal is reached.
    Example: goal is "go to pricing", current URL is "example.com/pricing"
    → return {"action":"done","selector":null,"explanation":"Arrived at pricing page","message":"You're on the pricing page!"}
+
+   Example of correctly stopping:
+   Goal: "go to the coding page"
+   Current URL: "https://example.com/2023/12/coding.html"
+   Correct response: {"action":"done","selector":null,"explanation":"Already on the coding page","message":"You're on the coding page now."}
+
+   Even though the page may still show a "Coding" link in its navigation menu \
+(since that's how websites work), you are ALREADY on that page. Do not click it again.
 ---RULES END---
 
 CRITICAL: Your entire response must be a single JSON object.
@@ -175,9 +183,25 @@ def get_navigation_action(
     lines = dom_skeleton.strip().split("\n")
     trimmed_skeleton = "\n".join(lines[:_MAX_SKELETON_LINES])
 
+    # The completion-check block appears BEFORE the skeleton so the model's
+    # attention processes the URL comparison before it ever sees clickable
+    # elements that might tempt it into an unnecessary click.
     user_content = (
         f"Goal: {user_message}\n"
         f"Current URL: {current_url}\n\n"
+        "Before choosing any action, answer this first:\n\n"
+        "Does the CURRENT URL already represent where the user wants to be?\n\n"
+        f"Current URL: {current_url}\n"
+        f'User\'s goal: "{user_message}"\n\n'
+        "If the current URL already matches or clearly satisfies the goal, "
+        "you MUST respond with:\n"
+        '{"action":"done","selector":null,"explanation":"Already on the correct page",'
+        '"message":"<friendly confirmation message>"}\n\n'
+        "Do this BEFORE looking at the page elements below. "
+        "Do not click anything if you are already on the destination, "
+        "even if a link with a similar label is visible on the page.\n\n"
+        "Only if the current URL does NOT yet satisfy the goal, proceed to choose "
+        "the best click/scroll action from the elements listed below.\n\n"
         f"Current page elements:\n{trimmed_skeleton}\n\n"
         "---\n"
         "REMINDER: Your selector MUST be copied exactly from the skeleton above. "
