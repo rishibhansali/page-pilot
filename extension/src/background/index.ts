@@ -245,6 +245,9 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
   // Scroll loop tracking — 5 consecutive scrolls with no click means the model
   // is stuck searching and we should stop rather than run to the step limit.
   let consecutiveScrolls = 0;
+  // In-memory log of actions taken this loop. Sent to the backend each step so
+  // the model knows what it already clicked, even when Supabase history is empty.
+  const stepHistory: string[] = [];
 
   try {
     while (stepCount < MAX_STEPS && activeSessions.get(tabId)) {
@@ -269,6 +272,7 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
         user_message: userMessage,
         dom_skeleton: skeleton,
         new_conversation: stepCount === 1,
+        step_history: stepHistory.length > 0 ? stepHistory.join("\n") : "None",
       };
       let res: Response;
       try {
@@ -366,6 +370,13 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
           throw e;
         }
       }
+
+      // 6b. Record this action in the in-memory history so the model knows
+      //     what it already did when it receives the next step's request.
+      const historyEntry = action.action === "click"
+        ? `Step ${stepCount}: clicked "${action.selector}" — ${action.explanation}`
+        : `Step ${stepCount}: ${action.action} — ${action.explanation}`;
+      stepHistory.push(historyEntry);
 
       // 7. Wait for the page to settle before re-reading the DOM.
       const settleResp = await sendMessageToTab(tabId, { type: "WAIT_FOR_SETTLE" });

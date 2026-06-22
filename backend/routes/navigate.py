@@ -24,6 +24,7 @@ def navigate(request: NavigateRequest) -> NavigateResponse:
         dom_skeleton=request.dom_skeleton,
         conversation_history=history,
         current_url=request.url,
+        step_history=request.step_history,
     )
 
     new_user_content_for_history = (

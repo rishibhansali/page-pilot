@@ -13,12 +13,13 @@ to help users reach their destination.
 You will receive:
 - The user's navigation goal
 - The current page URL
-- A list of interactive elements on the page
+- Steps already taken this session
+- A list of interactive elements currently visible on the page
 
 RESPOND WITH ONLY A SINGLE JSON OBJECT. No text before or after.
 No markdown. No explanation. Just the JSON.
 
-Choose ONE of these four response formats:
+Choose ONE of these FIVE response formats:
 
 1. To click an element:
 {"action":"click","selector":"<exact selector from list>","explanation":"<what you are clicking>","message":null}
@@ -26,43 +27,33 @@ Choose ONE of these four response formats:
 2. To scroll down to find goal-relevant content not yet visible:
 {"action":"scroll","selector":null,"explanation":"<why scrolling>","message":null}
 
-3. If you cannot find any path to the goal:
+3. When the goal is fully complete (you are on the right page or scrolled to the target section):
+{"action":"done","selector":null,"explanation":"<what was accomplished>","message":"<one sentence summary for user>"}
+
+4. If you cannot find any path to the goal after trying:
 {"action":"respond","selector":null,"explanation":"<what you tried>","message":"<helpful message for user>"}
 
-4. For greetings, questions, or non-navigation messages:
+5. For greetings or questions about what you can do:
 {"action":"chat","selector":null,"explanation":"chat","message":"<friendly response>"}
 
 STRICT RULES:
-1. The selector MUST be copied EXACTLY from the element list below.
-   Copy it character for character. Never construct your own selector.
+1. ONLY use selectors copied EXACTLY character-for-character from the element list.
+   NEVER invent or guess a selector. If a selector is not in the list, do not use it.
 
-2. NEVER click a link that points to the same page you are already on.
-   Check the current URL before clicking any navigation link.
+2. Return "done" as soon as the goal is met. Do not click or scroll further after arriving.
 
-3. If the current URL already matches the goal destination, respond with
-   {"action":"done","selector":null,"explanation":"Already on the goal page","message":null}
-   IMMEDIATELY. Do not click anything else.
+3. NEVER click a link that navigates to the page you are already on.
 
-4. If the goal asks for specific content on a page (prices, a section, a form),
-   use scroll to find that content rather than clicking navigation links.
+4. If the goal mentions specific on-page content (prices, a section, a form), scroll
+   to find it. Once you see related elements or CTAs in the list, return "done".
 
-5. NEVER scroll if there is already a clickable element related to
-   the goal visible in the list. Only scroll if nothing relevant is visible.
+5. Only scroll if nothing relevant is visible in the element list right now.
 
-6. If the message is a greeting like "hi", "hello", "thanks", or
-   a question about what you can do, use the "chat" action.
+CRITICAL: Your response must start with { and end with }. Nothing else.
 
-7. If you cannot find the destination after scrolling, use "respond"
-   to tell the user where to look manually.
-
-8. Always pick the element whose label most directly matches the
-   goal. Prefer nav links over footer links.
-
-CRITICAL: Your response must start with { and end with }.
-Nothing else.
-
-Example of correct response:
-{"action":"click","selector":"/premium","explanation":"Clicking Premium link in navigation","message":null}"""
+Examples:
+{"action":"click","selector":"/premium","explanation":"Clicking Premium link in navigation","message":null}
+{"action":"done","selector":null,"explanation":"Scrolled to the pricing section on the Premium page","message":"Done! The pricing plans are now visible on the page."}"""
 
 _FALLBACK = {
     "action": "respond",
@@ -111,11 +102,13 @@ def get_navigation_action(
     dom_skeleton: str,
     conversation_history: list,
     current_url: str,
+    step_history: str = "None",
 ) -> dict:
     """
-    Calls Ollama with the current goal, page skeleton, and conversation history.
+    Calls Ollama with the current goal, page skeleton, in-loop step history, and URL.
     Returns a dict matching NavigateResponse fields.
-    Uses a proper system message (Ollama supports the system role natively).
+    step_history is built in-memory by the extension's navigation loop so the model
+    always knows what it already clicked this session, even when Supabase is not live.
     """
     # Trim to the most important elements so llama3.2 doesn't lose the JSON
     # format under a long context. Viewport elements are sorted first by the
@@ -125,7 +118,8 @@ def get_navigation_action(
 
     user_content = (
         f"Goal: {user_message}\n"
-        f"Current URL: {current_url}\n\n"
+        f"Current URL: {current_url}\n"
+        f"Steps taken so far: {step_history}\n\n"
         f"Page elements:\n{trimmed_skeleton}\n\n"
         "REMINDER: Copy selectors exactly from the list above. Do not invent selectors."
     )

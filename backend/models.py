@@ -10,6 +10,7 @@ class NavigateRequest(BaseModel):
     user_message: str
     dom_skeleton: str
     new_conversation: bool = False
+    step_history: str = "None"
 
 
 class NavigateResponse(BaseModel):
