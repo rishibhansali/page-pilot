@@ -15,6 +15,8 @@ def navigate(request: NavigateRequest) -> NavigateResponse:
     Loads per-tab conversation history, asks Claude for the next action,
     persists the updated history, then returns the action to the extension.
     """
+    if request.new_conversation:
+        supabase.clear_messages(request.tab_id)
     history = supabase.get_messages(request.tab_id)
 
     action = claude.get_navigation_action(

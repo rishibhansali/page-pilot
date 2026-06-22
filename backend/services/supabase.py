@@ -47,6 +47,18 @@ def get_messages(tab_id: str) -> list:
     return []
 
 
+def clear_messages(tab_id: str) -> None:
+    """
+    Deletes the session row for the given tab, wiping its conversation history.
+    Called at the start of each new user goal so old navigation context never
+    bleeds into a fresh request.
+    """
+    if not _is_configured():
+        return
+    client = _get_client()
+    client.table("sessions").delete().eq("tab_id", tab_id).execute()
+
+
 def save_messages(tab_id: str, url: str, messages: list) -> None:
     """
     Upserts the session row for this tab, writing the full message history.

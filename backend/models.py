@@ -9,6 +9,7 @@ class NavigateRequest(BaseModel):
     url: str
     user_message: str
     dom_skeleton: str
+    new_conversation: bool = False
 
 
 class NavigateResponse(BaseModel):
