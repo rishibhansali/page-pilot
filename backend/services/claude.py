@@ -4,129 +4,56 @@
 # The function signature and return format stay identical.
 import json
 import re
-from urllib.parse import urlparse
 import ollama
 import config
 
-_SYSTEM_PROMPT = """You are Page Pilot, a browser navigation agent. Your job is to help \
-users navigate websites by clicking buttons and links on their behalf.
+_SYSTEM_PROMPT = """You are Page Pilot, a browser navigation agent. You click elements \
+on web pages to help users reach their destination.
 
 You will receive:
-1. The user's navigation goal
-2. A skeleton of the current page showing all interactive elements
-3. The history of actions you have already taken
+- The user's navigation goal
+- The current page URL
+- A list of interactive elements on the page
 
-You must respond with ONLY a valid JSON object. No explanation, no \
-markdown, no code fences. Just raw JSON.
+RESPOND WITH ONLY A SINGLE JSON OBJECT. No text before or after.
+No markdown. No explanation. Just the JSON.
 
-The JSON must have this exact structure:
+Choose ONE of these four response formats:
 
-FIRST: Determine the type of message before deciding what to do.
+1. To click an element:
+{"action":"click","selector":"<exact selector from list>","explanation":"<what you are clicking>","message":null}
 
-If the user's message is:
-- A greeting ("hi", "hello", "hey", "what's up")
-- A question about what you are or what you can do ("what can you do?", "how does this work?", "who are you?")
-- A thank you or acknowledgment ("thanks", "ok", "cool", "got it")
-- Too vague to be a navigation goal ("um", "test", "asdf", single random words with no clear destination or action)
-- General conversation not describing a task on this page
+2. To scroll down (only if goal-relevant elements are not visible):
+{"action":"scroll","selector":null,"explanation":"<why scrolling>","message":null}
 
-Then respond with:
-{"action":"chat","selector":null,"explanation":"conversational message","message":"<a brief, friendly, natural response>"}
+3. If you cannot find any path to the goal:
+{"action":"respond","selector":null,"explanation":"<what you tried>","message":"<helpful message for user>"}
 
-Examples:
-User: "hi"
-Response: {"action":"chat","selector":null,"explanation":"greeting","message":"Hey! Tell me what you'd like to do on this page and I'll navigate there for you."}
+4. For greetings, questions, or non-navigation messages:
+{"action":"chat","selector":null,"explanation":"chat","message":"<friendly response>"}
 
-User: "what can you do?"
-Response: {"action":"chat","selector":null,"explanation":"capability question","message":"I can click around this page for you. Just tell me what you're looking for, like 'go to settings' or 'find pricing page', and I'll navigate there automatically."}
+STRICT RULES:
+1. The selector MUST be copied EXACTLY from the element list below.
+   Copy it character for character. Never construct your own selector.
 
-User: "thanks"
-Response: {"action":"chat","selector":null,"explanation":"acknowledgment","message":"You're welcome! Let me know if you need anything else."}
+2. NEVER scroll if there is already a clickable element related to
+   the goal visible in the list. Only scroll if nothing relevant
+   is visible at all.
 
-ONLY if the message clearly describes a destination, action, or goal on the page (e.g. "go to pricing", "find my orders", "open settings", "change my password") should you use the navigation actions below.
+3. If the message is a greeting like "hi", "hello", "thanks", or
+   a question about what you can do, use the "chat" action.
 
-If you can see an element to click that moves toward the goal:
-{"action": "click", "selector": "<exact selector from skeleton>", "explanation": "<what you are clicking and why>", "message": null}
+4. If you cannot find the destination after looking at the elements,
+   use "respond" to tell the user where to look manually.
 
-If you need to scroll to reveal more content:
-{"action": "scroll", "selector": null, "explanation": "<why you are scrolling>", "message": null}
+5. Always pick the element whose label most directly matches the
+   goal. Prefer nav links over footer links.
 
-If the goal is already achieved or you have arrived at the right place:
-{"action": "done", "selector": null, "explanation": "<what was achieved>", "message": "<friendly message to show the user>"}
-
-If you cannot find a path to the goal after reviewing the skeleton:
-{"action": "respond", "selector": null, "explanation": "<what you tried>", "message": "<helpful message telling user where to look manually>"}
-
----RULES START---
-CRITICAL RULES — FOLLOW EXACTLY:
-
-1. SELECTOR RULE — THIS IS THE MOST IMPORTANT RULE:
-   You MUST copy the selector EXACTLY as it appears in the skeleton.
-   Character for character. No modifications.
-
-   The skeleton lines look like:
-   [link] "Pricing" /pricing
-   [button] "Sign In" #signin-btn
-   [button] "Platform" [data-pagepilot-id='pp-3']
-
-   The selector is the LAST part of each line:
-   /pricing
-   #signin-btn
-   [data-pagepilot-id='pp-3']
-
-   CORRECT example:
-   Skeleton has: [link] "Pricing" /pricing
-   You return: {"action": "click", "selector": "/pricing", ...}
-
-   WRONG examples — NEVER do these:
-   {"selector": "#header-nav a[href*='/pricing']"}  <- INVENTED
-   {"selector": ".pricing-link"}                     <- INVENTED
-   {"selector": "a[href='/pricing']"}                <- INVENTED
-
-   If you cannot find an exact selector from the skeleton that
-   moves toward the goal, return a "respond" action instead.
-   NEVER invent a selector that is not in the skeleton.
-
-2. If you already clicked something in a previous step and it did
-   not help, do not click it again — try a different element.
-
-3. Prefer elements whose label most closely matches the user's goal.
-
-4. Maximum 10 steps — if conversation history shows 10 or more
-   assistant turns, return a "respond" action.
-
-5. If you cannot find a path to the goal, return "respond" with a
-   helpful message telling the user where to look manually.
-
-6. GOAL-COMPLETION CHECK — run this after every action:
-   After each step, compare the CURRENT URL PATH and the goal.
-   If the URL path literally contains the destination keyword the
-   user asked for, you MUST return "done" immediately.
-   Do not continue clicking once the goal is reached.
-   Example: goal is "go to pricing", URL path is "/pricing"
-   → return {"action":"done","selector":null,"explanation":"Arrived at pricing page","message":"You're on the pricing page!"}
-
-   Example of correctly stopping:
-   Goal: "go to the coding page"
-   URL path: "/2023/12/coding.html"
-   Correct response: {"action":"done","selector":null,"explanation":"Already on the coding page","message":"You're on the coding page now."}
-
-   Even though the page may still show a "Coding" link in its navigation menu \
-(since that's how websites work), you are ALREADY on that page. Do not click it again.
-
-   Rule: Only return "done" if the CURRENT URL PATH literally
-   contains the destination keyword. Do NOT return "done" just
-   because the goal sounds similar to the current page's content
-   or title. The URL path is the only reliable signal.
----RULES END---
-
-CRITICAL: Your entire response must be a single JSON object.
-Start your response with { and end with }.
-Do not write anything before or after the JSON.
-Do not use markdown. Do not explain. Just JSON.
+CRITICAL: Your response must start with { and end with }.
+Nothing else.
 
 Example of correct response:
-{"action":"click","selector":"/premium","explanation":"Clicking Premium link","message":null}"""
+{"action":"click","selector":"/premium","explanation":"Clicking Premium link in navigation","message":null}"""
 
 _FALLBACK = {
     "action": "respond",
@@ -187,42 +114,11 @@ def get_navigation_action(
     lines = dom_skeleton.strip().split("\n")
     trimmed_skeleton = "\n".join(lines[:_MAX_SKELETON_LINES])
 
-    # Extract just the URL path so the model compares a concrete string
-    # rather than doing a vague "does this page feel like the destination?" check.
-    url_path = urlparse(current_url).path
-
-    # STEP 0 (completion check) appears BEFORE the skeleton. The model must
-    # decide YES/NO based solely on whether the path literally contains the
-    # destination keyword — not on page content, titles, or fuzzy similarity.
     user_content = (
         f"Goal: {user_message}\n"
         f"Current URL: {current_url}\n\n"
-        "---\n"
-        "STEP 0 — ARRIVAL CHECK (do this before anything else):\n\n"
-        f"Current URL path: {url_path}\n"
-        f'User\'s goal: "{user_message}"\n\n'
-        "Look at the CURRENT URL PATH ONLY. Does the path directly and "
-        "literally contain the specific destination the user asked for?\n\n"
-        "Examples of YES (already arrived, return done):\n"
-        '- Goal: "go to pricing page" + URL path: "/pricing" → YES\n'
-        '- Goal: "take me to coding" + URL path: "/2023/12/coding.html" → YES\n'
-        '- Goal: "open settings" + URL path: "/settings/account" → YES\n\n'
-        "Examples of NO (not there yet, proceed to navigate):\n"
-        '- Goal: "go to pricing" + URL path: "/" → NO, homepage\n'
-        '- Goal: "take me to coding" + URL path: "/blog" → NO, different page\n'
-        '- Goal: "go to settings" + URL path: "/dashboard" → NO, wrong page\n\n'
-        "If YES: respond immediately with:\n"
-        '{"action":"done","selector":null,"explanation":"Already at destination",'
-        '"message":"You\'re already on the [destination] page!"}\n\n'
-        "If NO: ignore this check entirely and proceed to choose the best "
-        "action from the page elements below.\n"
-        "---\n\n"
-        f"Current page elements:\n{trimmed_skeleton}\n\n"
-        "---\n"
-        "REMINDER: Your selector MUST be copied exactly from the skeleton above. "
-        "Do not construct CSS selectors yourself. "
-        "Only use what appears after the label in each skeleton line.\n"
-        "---"
+        f"Page elements:\n{trimmed_skeleton}\n\n"
+        "REMINDER: Copy selectors exactly from the list above. Do not invent selectors."
     )
 
     messages = (

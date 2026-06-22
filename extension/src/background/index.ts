@@ -203,6 +203,40 @@ interface NavigationAction {
 }
 
 /**
+ * Checks whether the current URL path already satisfies the user's goal
+ * by testing if any meaningful destination word from the goal appears in the
+ * URL path. Used as a code-level completion check so we stop before making
+ * an unnecessary backend call.
+ */
+function isGoalAchieved(userMessage: string, currentUrl: string): boolean {
+  try {
+    const urlPath = new URL(currentUrl).pathname.toLowerCase();
+    const goal = userMessage.toLowerCase();
+
+    // Words that carry no destination meaning — strip them before matching.
+    const stopWords = new Set([
+      "take", "me", "to", "go", "find", "open", "show", "the",
+      "a", "an", "page", "please", "can", "you", "i", "want",
+      "need", "navigate", "bring", "get", "help", "click",
+      "visit", "see", "view", "check", "look", "at", "for",
+      "into", "onto", "up", "down", "back", "forward", "my",
+      "this", "that", "its", "their", "our", "your", "now",
+    ]);
+
+    const goalWords = goal
+      .split(/\s+/)
+      .map((w) => w.replace(/[^a-z0-9]/g, ""))
+      .filter((w) => w.length > 2 && !stopWords.has(w));
+
+    if (goalWords.length === 0) return false;
+
+    return goalWords.some((word) => urlPath.includes(word));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Wraps fetch with a 30-second AbortController timeout.
  * Rejects with a DOMException named "AbortError" if the deadline is exceeded,
  * which the caller can detect to show a user-friendly timeout message.
@@ -242,6 +276,9 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
   let lastSelector: string | null = null;
   let lastUrl: string | null = null;
   let repeatCount = 0;
+  // Scroll loop tracking — 3 consecutive scrolls with no click means the model
+  // is stuck searching and we should stop rather than run to the step limit.
+  let consecutiveScrolls = 0;
 
   try {
     while (stepCount < MAX_STEPS && activeSessions.get(tabId)) {
@@ -257,10 +294,24 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
       }
       const { skeleton, url: currentUrl } = skeletonResp;
 
+      // 2a. Code-level goal completion check (step 2+).
+      // Runs BEFORE the backend call so we stop cleanly without spending an API
+      // round-trip when the URL already contains the destination keyword.
+      if (stepCount > 1 && isGoalAchieved(userMessage, currentUrl)) {
+        console.log("[PagePilot] Goal achieved — URL matches destination:", currentUrl);
+        await sendNavigationComplete(tabId, {
+          success: true,
+          message: "Done! I've navigated you to the destination.",
+        });
+        activeSessions.delete(tabId);
+        stopKeepalive();
+        return;
+      }
+
       console.log(`[PagePilot] Step ${stepCount}/${MAX_STEPS}`);
       console.log("[PagePilot] Sending to backend:", { tab_id: String(tabId), url: currentUrl, user_message: userMessage });
 
-      // 2. Ask the backend for the next action.
+      // 2b. Ask the backend for the next action.
       let res: Response;
       try {
         res = await fetchWithTimeout("http://localhost:8000/api/navigate", {
@@ -307,9 +358,8 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
         payload: { step: stepCount, explanation: action.explanation, action: action.action },
       });
 
-      // 5. Repeated-action guard — if the model issues the same click on the
-      //    same URL twice in a row, it has almost certainly already reached the
-      //    goal but failed to return "done". Stop gracefully rather than looping.
+      // 5. Repeated-click guard — same selector on the same URL means the model
+      //    has probably arrived but forgot to return "done".
       if (action.action === "click" && action.selector === lastSelector && currentUrl === lastUrl) {
         repeatCount++;
         console.log(`[PagePilot] Repeated action detected (${repeatCount}x): ${action.selector} on ${currentUrl}`);
@@ -326,6 +376,24 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
       }
       lastSelector = action.selector;
       lastUrl = currentUrl;
+
+      // 5b. Scroll loop guard — 3 consecutive scrolls with no click means the
+      //     model is stuck and we stop rather than running to the step limit.
+      if (action.action === "scroll") {
+        consecutiveScrolls++;
+        if (consecutiveScrolls >= 3) {
+          console.log("[PagePilot] Scroll loop detected — stopping");
+          await sendNavigationComplete(tabId, {
+            success: false,
+            message: "I couldn't find the destination by scrolling. Try being more specific about what you're looking for.",
+          });
+          activeSessions.delete(tabId);
+          stopKeepalive();
+          return;
+        }
+      } else {
+        consecutiveScrolls = 0;
+      }
 
       // 6. Execute the action in the page.
       // A timeout here almost always means the click fired and triggered a navigation
