@@ -123,8 +123,8 @@ def get_navigation_action(
 
     messages = (
         [{"role": "system", "content": _SYSTEM_PROMPT}]
-        + [{"role": "user", "content": user_content}]
         + conversation_history
+        + [{"role": "user", "content": user_content}]
     )
 
     response = ollama.chat(

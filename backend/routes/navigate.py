@@ -24,13 +24,12 @@ def navigate(request: NavigateRequest) -> NavigateResponse:
         current_url=request.url,
     )
 
-    new_user_content = (
+    new_user_content_for_history = (
         f"Goal: {request.user_message}\n"
-        f"Current URL: {request.url}\n\n"
-        f"Current page elements:\n{request.dom_skeleton}"
+        f"Current URL: {request.url}"
     )
     updated_history = history + [
-        {"role": "user", "content": new_user_content},
+        {"role": "user", "content": new_user_content_for_history},
         {"role": "assistant", "content": json.dumps(action)},
     ]
 
