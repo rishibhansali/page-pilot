@@ -245,6 +245,12 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
   // Scroll loop tracking — 5 consecutive scrolls with no click means the model
   // is stuck searching and we should stop rather than run to the step limit.
   let consecutiveScrolls = 0;
+  // Safety net: if the model keeps scrolling on a page it navigated to (different
+  // from the starting URL), the goal content is likely there but not captured in
+  // the skeleton (e.g. price amounts in non-interactive text nodes). Return done
+  // after 2 destination-page scrolls so the user doesn't wait through 5.
+  let startUrl: string | null = null;
+  let destinationScrollCount = 0;
   // In-memory log of actions taken this loop. Sent to the backend each step so
   // the model knows what it already clicked, even when Supabase history is empty.
   const stepHistory: string[] = [];
@@ -262,6 +268,7 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
         continue;
       }
       const { skeleton, url: currentUrl } = skeletonResp;
+      if (stepCount === 1) startUrl = currentUrl;
 
       console.log(`[PagePilot] Step ${stepCount}/${MAX_STEPS}`);
 
@@ -334,10 +341,30 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
       lastSelector = action.selector;
       lastUrl = currentUrl;
 
-      // 5b. Scroll loop guard — 5 consecutive scrolls with no click means the
-      //     model is stuck searching and we stop rather than running to the step limit.
+      // 5b. Scroll guards.
       if (action.action === "scroll") {
         consecutiveScrolls++;
+
+        // Destination-scroll guard: if the model is scrolling on a page it
+        // navigated to (different from startUrl), the goal content is likely
+        // visible but not in the interactive-element skeleton (e.g. price
+        // amounts are in plain text nodes). Stop after 2 such scrolls.
+        if (startUrl !== null && currentUrl !== startUrl) {
+          destinationScrollCount++;
+          if (destinationScrollCount >= 2) {
+            console.log("[PagePilot] Destination-scroll limit reached — goal content is on this page");
+            await sendNavigationComplete(tabId, {
+              success: true,
+              message: "I've navigated to the page and scrolled to the content area. The goal should now be visible.",
+            });
+            activeSessions.delete(tabId);
+            stopKeepalive();
+            return;
+          }
+        }
+
+        // General scroll loop guard: 5 consecutive scrolls with no click on
+        // the same page we started on means the model is stuck searching.
         if (consecutiveScrolls >= 5) {
           console.log("[PagePilot] Scroll loop detected — stopping");
           await sendNavigationComplete(tabId, {
@@ -350,6 +377,7 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
         }
       } else {
         consecutiveScrolls = 0;
+        destinationScrollCount = 0;
       }
 
       // 6. Execute the action in the page.

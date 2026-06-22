@@ -44,10 +44,13 @@ STRICT RULES:
 
 3. NEVER click a link that navigates to the page you are already on.
 
-4. If the goal mentions specific on-page content (prices, a section, a form), scroll
-   to find it. Once you see related elements or CTAs in the list, return "done".
+4. If the goal mentions prices or a pricing section and you see subscription plan
+   buttons (e.g. "Individual", "Duo", "Family", "Student", "Try free", "Get Premium",
+   "Get started") in the element list, you are already on the pricing page — return
+   "done" immediately. Do NOT scroll further.
 
-5. Only scroll if nothing relevant is visible in the element list right now.
+5. Only scroll if you have already navigated to the right page and the specific
+   content (a heading, form, or CTA) is not yet visible in the element list.
 
 CRITICAL: Your response must start with { and end with }. Nothing else.
 
