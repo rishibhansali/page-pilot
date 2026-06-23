@@ -4,12 +4,16 @@
 
 import React from "react";
 import ReactDOM from "react-dom/client";
-import Widget from "./Widget";
 import ErrorBoundary from "./ErrorBoundary";
 // Import compiled CSS as an inline string so we can inject it into the shadow root.
 // The ?inline suffix is a Vite feature — Tailwind compiles the CSS at build time,
 // Vite returns it as a plain string rather than injecting it into <head>.
 import widgetStyles from "./styles.css?inline";
+
+// ── Change this import to switch design variants, then rebuild ──
+// import Widget from "./variants/A/Widget"; // A: Frosted Glass Sidebar
+import Widget from "./variants/B/Widget"; // B: Floating Glass Card (iridescent border)
+// import Widget from "./variants/C/Widget"; // C: Full Liquid Glass / visionOS orb + aurora
 
 /**
  * Creates an isolated Shadow DOM host on document.body and mounts the Widget
@@ -33,25 +37,22 @@ export function mountWidget(): void {
     "left: 0",
     "width: 0",
     "height: 0",
-    "z-index: 2147483647", // max z-index — above every host page element
-    "pointer-events: none", // host itself doesn't intercept clicks; children opt-in
+    "z-index: 2147483647",
+    "pointer-events: none",
   ].join("; ");
   document.body.appendChild(host);
 
   // Attach a Shadow DOM so our styles are fully encapsulated.
-  // mode: "open" lets us access shadow internals from this script if needed.
   const shadow = host.attachShadow({ mode: "open" });
 
   // Inject compiled Tailwind CSS into the shadow root.
-  // Without this, none of our Tailwind utility classes would render correctly
-  // because the browser only applies document-level stylesheets to the light DOM.
   const styleEl = document.createElement("style");
   styleEl.textContent = widgetStyles;
   shadow.appendChild(styleEl);
 
   // Mount point inside the shadow — React renders here.
   const mountPoint = document.createElement("div");
-  mountPoint.style.cssText = "pointer-events: auto"; // re-enable clicks for our UI
+  mountPoint.style.cssText = "pointer-events: auto";
   shadow.appendChild(mountPoint);
 
   ReactDOM.createRoot(mountPoint).render(

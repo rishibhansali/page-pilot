@@ -1,11 +1,14 @@
-# NOTE: Currently using Ollama (local) for development.
-# Switch to Anthropic Claude before final demo.
-# To switch: replace this file with the Claude implementation.
-# The function signature and return format stay identical.
+# Navigation service — calls Anthropic Claude API to decide the next browser action.
+# Drop-in replacement for the previous Ollama implementation; all function signatures
+# and return shapes are identical so the rest of the backend needs no changes.
+
 import json
 import re
-import ollama
+
+import anthropic
 import config
+
+_client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
 _SYSTEM_PROMPT = """You are Page Pilot, a browser navigation agent. You navigate web pages \
 to help users reach their destination.
@@ -65,11 +68,6 @@ _FALLBACK = {
     "message": "Something went wrong, please try again",
 }
 
-# Maximum skeleton lines sent to the model. llama3.2 produces malformed JSON
-# when the context is too large; viewport elements are already sorted first by
-# the extractor so the most actionable elements are always in the first N lines.
-_MAX_SKELETON_LINES = 40
-
 
 def _extract_json(text: str) -> dict:
     """
@@ -108,36 +106,55 @@ def get_navigation_action(
     step_history: str = "None",
 ) -> dict:
     """
-    Calls Ollama with the current goal, page skeleton, in-loop step history, and URL.
+    Calls Claude with the current goal, page skeleton, in-loop step history, and URL.
     Returns a dict matching NavigateResponse fields.
-    step_history is built in-memory by the extension's navigation loop so the model
-    always knows what it already clicked this session, even when Supabase is not live.
-    """
-    # Trim to the most important elements so llama3.2 doesn't lose the JSON
-    # format under a long context. Viewport elements are sorted first by the
-    # extractor so the top 40 lines are the ones the user can actually see.
-    lines = dom_skeleton.strip().split("\n")
-    trimmed_skeleton = "\n".join(lines[:_MAX_SKELETON_LINES])
+    conversation_history carries prior turns so Claude remembers what it already tried.
+    step_history is built in-memory by the extension's navigation loop as a plain-text
+    summary of actions taken, giving Claude a compact recap even across page navigations.
 
+    Catches Anthropic API errors (rate limit, connection, status) and returns a
+    user-friendly fallback dict instead of raising — keeps the HTTP layer clean.
+    """
     user_content = (
         f"Goal: {user_message}\n"
         f"Current URL: {current_url}\n"
         f"Steps taken so far: {step_history}\n\n"
-        f"Page elements:\n{trimmed_skeleton}\n\n"
+        f"Page elements:\n{dom_skeleton}\n\n"
         "REMINDER: Copy selectors exactly from the list above. Do not invent selectors."
     )
 
-    messages = (
-        [{"role": "system", "content": _SYSTEM_PROMPT}]
-        + conversation_history
-        + [{"role": "user", "content": user_content}]
-    )
+    # Build the messages array: system is passed separately; history carries prior
+    # user/assistant turns so Claude has full context across multi-step navigation.
+    messages = conversation_history + [{"role": "user", "content": user_content}]
 
-    response = ollama.chat(
-        model=config.OLLAMA_MODEL,
-        messages=messages,
-        options={"temperature": 0},
-    )
+    try:
+        response = _client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=256,
+            system=_SYSTEM_PROMPT,
+            messages=messages,
+        )
+    except anthropic.RateLimitError:
+        return {
+            "action": "respond",
+            "selector": None,
+            "explanation": "Rate limit hit",
+            "message": "The AI is temporarily rate-limited. Please wait a moment and try again.",
+        }
+    except anthropic.APIConnectionError:
+        return {
+            "action": "respond",
+            "selector": None,
+            "explanation": "API connection error",
+            "message": "Cannot reach the AI service. Check your internet connection.",
+        }
+    except anthropic.APIStatusError as e:
+        return {
+            "action": "respond",
+            "selector": None,
+            "explanation": f"API status error: {e.status_code}",
+            "message": f"AI service error ({e.status_code}). Please try again.",
+        }
 
-    text = response.message.content.strip()
+    text = response.content[0].text.strip()
     return _extract_json(text)

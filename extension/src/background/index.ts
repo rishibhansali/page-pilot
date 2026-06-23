@@ -298,16 +298,31 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
       } catch (fetchErr) {
         const isTimeout =
           fetchErr instanceof DOMException && fetchErr.name === "AbortError";
+        console.error("[PagePilot] Fetch error:", fetchErr);
         await sendNavigationComplete(tabId, {
           success: false,
           message: isTimeout
-            ? "Navigation timed out — Ollama may be slow or the backend may be down. Please try again."
+            ? "Navigation timed out — the backend may be slow or down. Please try again."
             : `Network error: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
         }).catch(() => { /* content script may be gone */ });
         activeSessions.delete(tabId);
         return;
       }
-      if (!res.ok) throw new Error(`Backend error: ${res.status} ${res.statusText}`);
+      if (!res.ok) {
+        /** Map HTTP status codes to user-friendly messages before throwing so the
+         *  outer catch block receives a clear error string rather than a raw status. */
+        let errorMessage: string;
+        if (res.status === 503) {
+          errorMessage = "The AI service is temporarily unavailable. Please try again in a moment.";
+        } else if (res.status === 422) {
+          errorMessage = "The AI returned an unexpected response format. Please try again.";
+        } else if (res.status >= 500) {
+          errorMessage = `Backend error (${res.status}). Please try again.`;
+        } else {
+          errorMessage = `Backend error: ${res.status} ${res.statusText}`;
+        }
+        throw new Error(errorMessage);
+      }
       const action = await res.json() as NavigationAction;
       console.log("[PagePilot] Action:", action);
 
@@ -433,9 +448,15 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
   } catch (err) {
     console.error("[PagePilot] Navigation loop error:", err);
     try {
+      // Use the error message directly if it came from our HTTP status handler above,
+      // otherwise fall back to a generic message so we don't expose internal stack traces.
+      const userMessage =
+        err instanceof Error && err.message.length > 0
+          ? err.message
+          : "An unexpected error occurred. Please try again.";
       await sendNavigationComplete(tabId, {
         success: false,
-        message: "Navigation interrupted — the page changed unexpectedly. Please try again.",
+        message: userMessage,
       });
     } catch (sendErr) {
       console.error("[PagePilot] Could not send error completion:", sendErr);
