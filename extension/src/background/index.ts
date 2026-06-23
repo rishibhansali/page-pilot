@@ -210,7 +210,7 @@ interface NavigationAction {
 async function fetchWithTimeout(
   url: string,
   options: RequestInit,
-  timeoutMs: number = 30000
+  timeoutMs: number = 60000
 ): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -302,7 +302,9 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
         await sendNavigationComplete(tabId, {
           success: false,
           message: isTimeout
-            ? "Navigation timed out — the backend may be slow or down. Please try again."
+            ? stepCount > 1
+              ? "The AI took too long to respond — but the page may already be where you need it. Check manually before retrying."
+              : "Navigation timed out — the backend may be slow or down. Please try again."
             : `Network error: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
         }).catch(() => { /* content script may be gone */ });
         activeSessions.delete(tabId);

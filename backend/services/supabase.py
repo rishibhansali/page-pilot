@@ -40,11 +40,16 @@ def get_messages(tab_id: str) -> list:
     """
     if not _is_configured():
         return []
-    client = _get_client()
-    result = client.table("sessions").select("messages").eq("tab_id", tab_id).execute()
-    if result.data:
-        return result.data[0]["messages"]
-    return []
+    try:
+        client = _get_client()
+        result = client.table("sessions").select("messages").eq("tab_id", tab_id).execute()
+        if result.data:
+            return result.data[0]["messages"]
+        return []
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("supabase.get_messages failed: %s", exc)
+        return []
 
 
 def clear_messages(tab_id: str) -> None:
@@ -55,8 +60,12 @@ def clear_messages(tab_id: str) -> None:
     """
     if not _is_configured():
         return
-    client = _get_client()
-    client.table("sessions").delete().eq("tab_id", tab_id).execute()
+    try:
+        client = _get_client()
+        client.table("sessions").delete().eq("tab_id", tab_id).execute()
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("supabase.clear_messages failed: %s", exc)
 
 
 def save_messages(tab_id: str, url: str, messages: list) -> None:
@@ -66,12 +75,16 @@ def save_messages(tab_id: str, url: str, messages: list) -> None:
     """
     if not _is_configured():
         return
-    client = _get_client()
-    client.table("sessions").upsert(
-        {
-            "tab_id": tab_id,
-            "url": url,
-            "messages": messages,
-            "updated_at": "now()",
-        }
-    ).execute()
+    try:
+        client = _get_client()
+        client.table("sessions").upsert(
+            {
+                "tab_id": tab_id,
+                "url": url,
+                "messages": messages,
+                "updated_at": "now()",
+            }
+        ).execute()
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("supabase.save_messages failed: %s", exc)
