@@ -352,9 +352,15 @@ async function startNavigationLoop(tabId: number, userMessage: string): Promise<
         repeatCount++;
         console.log(`[PagePilot] Repeated action detected (${repeatCount}x): ${action.selector} on ${currentUrl}`);
         if (repeatCount >= 2) {
+          // If the URL changed from where we started, the click probably worked and
+          // Claude just forgot to return "done" — call it a success.
+          // If the URL never changed, the click isn't working — give up with an error.
+          const didNavigate = startUrl !== null && currentUrl !== startUrl;
           await sendNavigationComplete(tabId, {
-            success: true,
-            message: `Looks like I've reached the destination — ${action.explanation}`,
+            success: didNavigate,
+            message: didNavigate
+              ? `I've navigated to the destination — ${action.explanation}`
+              : "I kept clicking the same element without the page changing. Try navigating manually or rephrasing your goal.",
           });
           activeSessions.delete(tabId);
           return;
