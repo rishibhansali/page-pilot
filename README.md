@@ -12,26 +12,59 @@ Tell Page Pilot what you want to accomplish in plain English — it reads the pa
 - Node.js 20+
 - Python 3.11+
 - An [Anthropic API key](https://console.anthropic.com)
+- A [Supabase](https://supabase.com) project (free tier works)
 
 ---
 
 ### 1. Clone & configure
 
 ```bash
-git clone https://github.com/your-org/page-pilot.git
+git clone https://github.com/rishibhansali/page-pilot.git
 cd page-pilot
-
-# Extension env
-cp .env.example extension/.env
 
 # Backend env
 cp backend/.env.example backend/.env
-# → Edit backend/.env and add your ANTHROPIC_API_KEY
+# → Edit backend/.env and fill in your keys (see Environment Variables below)
 ```
 
 ---
 
-### 2. Run the backend
+### 2. Set up Supabase
+
+In your Supabase project's SQL Editor, run:
+
+```sql
+CREATE TABLE sessions (
+  tab_id     TEXT PRIMARY KEY,
+  url        TEXT,
+  messages   JSONB DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE navigation_sessions (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tab_id     TEXT NOT NULL,
+  goal       TEXT NOT NULL,
+  status     TEXT NOT NULL DEFAULT 'running',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE navigation_steps (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id  UUID NOT NULL REFERENCES navigation_sessions(id) ON DELETE CASCADE,
+  step_num    INT NOT NULL,
+  action      TEXT NOT NULL,
+  selector    TEXT,
+  explanation TEXT NOT NULL,
+  url         TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+---
+
+### 3. Run the backend
 
 ```bash
 cd backend
@@ -41,35 +74,52 @@ pip install -r requirements.txt
 
 uvicorn main:app --reload
 # → API running at http://localhost:8000
-# → Docs at http://localhost:8000/docs
-```
-
-Verify it works:
-```bash
-curl http://localhost:8000/health
-# {"status":"ok","version":"0.1.0"}
 ```
 
 ---
 
-### 3. Build the extension
+### 4. Build the extension
 
 ```bash
 cd extension
 npm install
-npm run dev          # watch mode — rebuilds on file changes
+npm run build
 ```
 
 ---
 
-### 4. Load the extension in Chrome
+### 5. Load the extension in Chrome
 
 1. Open `chrome://extensions`
 2. Enable **Developer mode** (top right)
 3. Click **Load unpacked**
 4. Select the `extension/dist/` folder
 
-The Page Pilot icon will appear in your toolbar.
+The Page Pilot pill will appear on every page — drag it anywhere, click to open.
+
+---
+
+## Environment Variables
+
+Add these to `backend/.env`:
+
+```env
+ANTHROPIC_API_KEY=sk-ant-...
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your-anon-key
+ALLOWED_ORIGINS=chrome-extension://your-extension-id
+```
+
+---
+
+## How It Works
+
+1. User types a goal (e.g. *"Show me Spotify Premium prices"*)
+2. The floating widget sends the goal to the background service worker
+3. Service worker reads the DOM via the content script and POSTs to the backend
+4. Backend calls Claude, which returns a single JSON action (`click`, `scroll`, `done`, etc.)
+5. Content script executes the action; the loop repeats up to 10 steps
+6. Every session and step is persisted to Supabase in real time
 
 ---
 
@@ -77,33 +127,22 @@ The Page Pilot icon will appear in your toolbar.
 
 ```
 page-pilot/
-├── extension/          # Chrome Extension (React + TS + Vite + Tailwind)
-│   ├── src/
-│   │   ├── background/ # MV3 service worker — orchestrates the AI loop
-│   │   ├── content/    # Content script — reads DOM, executes actions
-│   │   ├── popup/      # React UI — goal input, status, step log
-│   │   └── types/      # Shared TypeScript types
-│   └── manifest.json
-├── backend/            # FastAPI service — calls Claude, returns actions
-│   ├── app/
-│   │   ├── api/        # Route handlers (health, navigate)
-│   │   ├── core/       # Config + Claude client
-│   │   ├── models/     # Pydantic schemas
-│   │   └── services/   # Navigation AI logic
+├── extension/
+│   └── src/
+│       ├── background/     # MV3 service worker — orchestrates the AI loop
+│       ├── content/        # Content script — reads DOM, executes actions
+│       ├── widget/         # Floating React UI (Shadow DOM, Variant B active)
+│       └── types/          # Shared TypeScript types
+├── backend/
+│   ├── routes/             # FastAPI route handlers
+│   ├── services/
+│   │   ├── claude.py           # Anthropic API calls
+│   │   ├── supabase.py         # Conversation history persistence
+│   │   └── supabase_sessions.py # Session + step persistence
+│   ├── models.py
 │   └── main.py
-└── .github/workflows/  # CI/CD skeletons
+└── .github/workflows/
 ```
-
----
-
-## How It Works
-
-1. User types a goal in the popup (e.g. *"Find a direct flight to Tokyo for next Friday"*)
-2. Background service worker requests a DOM snapshot from the content script
-3. Snapshot + goal are sent to the backend `/api/navigate` endpoint
-4. Backend calls Claude, which returns a single JSON action (`click`, `type`, `scroll`, etc.)
-5. Content script executes the action on the page
-6. Loop repeats until Claude returns `{ "action": "done" }`
 
 ---
 
@@ -111,11 +150,11 @@ page-pilot/
 
 | Layer | Technology |
 |---|---|
-| Extension | React 18 + TypeScript + Vite + Tailwind CSS |
+| Extension UI | React 18 + TypeScript + Vite + Tailwind CSS |
 | Chrome API | Manifest V3 (service worker + content script) |
 | Backend | FastAPI (Python 3.11) |
-| AI | Claude `claude-sonnet-4-20250514` |
-| Database | Supabase (PostgreSQL) — schema only, coming in M5 |
+| AI | Claude `claude-sonnet-4-6` |
+| Database | Supabase (PostgreSQL) |
 
 ---
 
@@ -123,10 +162,10 @@ page-pilot/
 
 ```bash
 # Type check extension
-cd extension && npm run typecheck
+cd extension && npx tsc --noEmit
 
-# Run backend tests
-cd backend && pytest -v
+# Run backend tests (21 tests, all mocked — no network calls)
+cd backend && pytest tests/ -v
 ```
 
 ---
@@ -134,18 +173,18 @@ cd backend && pytest -v
 ## Security
 
 - The Anthropic API key **never** leaves the backend.
-- The extension communicates only with our own backend, never with Anthropic directly.
+- The extension communicates only with the local backend, never with Anthropic directly.
 - Payment forms are explicitly excluded from AI interaction.
 
 ---
 
-## Roadmap
+## Milestones
 
 | Milestone | Status |
 |---|---|
-| M1 — Foundation (this PR) | ✅ Done |
-| M2 — DOM Snapshot | 🔲 Next |
-| M3 — AI Loop | 🔲 |
-| M4 — Full End-to-End | 🔲 |
-| M5 — Auth + Supabase | 🔲 |
-| M6 — Polish | 🔲 |
+| M1 — Foundation | ✅ |
+| M2 — DOM Snapshot | ✅ |
+| M3 — AI Loop | ✅ |
+| M4 — Full End-to-End | ✅ |
+| M5 — Session Persistence | ✅ |
+| M6 — Polish | ✅ |
